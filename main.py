@@ -20,9 +20,9 @@ migirditch@gmail.com
 Python 3.7
 '''
 # Imports
-import sys
-import numpy as np
-import itertools
+import sys  # sys epsilon
+import numpy as np  # valueFunction representation
+import matplotlib.pyplot as plt  # vis tool
 
 # Support functions
 
@@ -126,4 +126,9 @@ def valueIteration(worldSize, epsilon=0.00001, gamma=1.0):
 
 
 # run it
-print(valueIteration(10))
+value = valueIteration(20)
+
+# plot it
+plt.imshow(value)
+plt.colorbar()
+plt.show()
