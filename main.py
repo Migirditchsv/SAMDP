@@ -27,35 +27,44 @@ import itertools
 # Support functions
 
 
-def lookAhead(valueFunciton, action, state, gamma):
+def lookAhead(valueFunciton, action, currentState, gamma):
     # init
+    valueHolder = valueFunciton
     [rSize, cSize] = valueFunciton.shape
     if rSize == cSize:
         worldSize = rSize
     else:
         sys.exit('Error in SAMDP:lookAhead: rSize!=cSize')
 
-    newStates = admissableMoves(state, worldSize)
-    prob = transitionProbability(action, state, newStates)
+    newStates = admissableMoves(currentState, worldSize)
+    prob = transitionProbability(action, currentState, newStates)
     rewards = expectedReward(newStates)
-    selectValues = valueFunciton[newStates]
-    valueFunciton = prob * (rewards + gamma * selectValues)
+    index = 0
+    for state in newStates:
+        r = state[0]
+        c = state[1]
+        valueFunciton[r][c] = prob[index] * \
+            (rewards[index] + gamma * valueHolder[r][c])
+        index += 1
 
     return valueFunciton
 
 
 def transitionProbability(action, state, newStates):
     pos = state + action
-    dist = [(point[0]-pos[0]) ^ 2 + (point[1]-pos[1])
-            ^ 2 for point in newStates]
-    prob = np.ones(len(dist)) / dist
+    dist = [max(
+        sys.float_info.epsilon,
+        (point[0]-pos[0])**2 + (point[1]-pos[1]) ** 2)
+        for point in newStates]
+    prob = np.ones(len(dist))
+    prob /= (dist)
     # sum over columns
     return(prob)
 
 
 def expectedReward(newStates):
 
-    rewards = np.ones(newStates.size) * -1
+    rewards = np.ones(len(newStates)) * -1
     return(rewards)
 
 
@@ -107,7 +116,8 @@ def valueIteration(worldSize, epsilon=0.00001, gamma=1.0):
                         valueFunction, action, state, gamma)
         # close out
         # min bc reward is <= 0
-        maxDifference = min(newValueFunction - valueFunction)
+        diff = newValueFunction - valueFunction
+        maxDifference = diff.min()
         convergence = maxDifference <= epsilon
         valueFunction = newValueFunction
     return valueFunction
@@ -116,4 +126,4 @@ def valueIteration(worldSize, epsilon=0.00001, gamma=1.0):
 
 
 # run it
-valueIteration(10)
+print(valueIteration(10))
