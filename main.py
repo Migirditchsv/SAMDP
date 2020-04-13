@@ -45,10 +45,11 @@ def lookAhead(valueFunciton, action, state, gamma):
 
 
 def transitionProbability(action, state, newStates):
-    pos =
-    taxiDistance = np.square((state + action) - newStates)
-    taxiDistance = np.sum(taxiDistance, axis=0)  # sum over columns
-    prob = taxiDistance / sum(taxiDistance)
+    pos = state + action
+    dist = [(point[0]-pos[0]) ^ 2 + (point[1]-pos[1])
+            ^ 2 for point in newStates]
+    prob = np.ones(len(dist)) / dist
+    # sum over columns
     return(prob)
 
 
@@ -60,33 +61,34 @@ def expectedReward(newStates):
 
 def admissableMoves(state, worldSize):
 
-    r = state[0]
-    c = state[1]
+    r = int(state[0])
+    c = int(state[1])
     rows = [r]
     cols = [c]
-    newStates = np.array
+    newStates = []
     # rows
     if r > 0:
-        rows.append(r-1)
+        rows.append(r - 1)
     if r < worldSize - 1:  # indexed 0:wS-1
         rows.append(r + 1)
     # cols
     if c > 0:
-        rows.append(c-1)
-    if c < worldSize - 1:  # indexed 0:wS-1
+        cols.append(c - 1)
+    if c < (worldSize - 1):  # indexed 0:wS-1
         cols.append(c + 1)
     # package for cartesian product
     for newR in rows:
         for newC in cols:
-            np.append(newStates, [newR, newC])
-    print(newStates)
-    newStates = np.asarray(newStates)
+            nextState = [newR, newC]
+            newStates.append(nextState)
+    newStates = np.array(newStates)
     return(newStates)
 
 
 def valueIteration(worldSize, epsilon=0.00001, gamma=1.0):
 
-    actionPrimatives = np.array([[1, 0], [-1, 0], [0, 1], [0, -1], [0, 0]])
+    actionPrimatives = np.array(
+        [[1, 0], [-1, 0], [0, 1], [0, -1], [0, 0], [-1, -1], [1, 1], [-1, 1], [1, -1]])
 
     valueFunction = np.zeros([worldSize, worldSize])
     newValueFunction = np.zeros([worldSize, worldSize])
