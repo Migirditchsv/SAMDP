@@ -20,106 +20,156 @@ migirditch@gmail.com
 Python 3.7
 '''
 # Imports
+import math # floor
 import sys  # sys epsilon
 import numpy as np  # valueFunction representation
 import matplotlib.pyplot as plt  # vis tool
+import seaborn as sns
 
 # Support functions
-
-
-def lookAhead(valueFunciton, action, currentState, gamma):
-    # init
-    valueHolder = valueFunciton
+def lookAhead(valueFunciton, obstacleSet,actionPrimatives, currentState):
+    
+    # Check for square world
+    qFunction = []
     [rSize, cSize] = valueFunciton.shape
     if rSize == cSize:
         worldSize = rSize
     else:
         sys.exit('Error in SAMDP:lookAhead: rSize!=cSize')
 
-    newStates = admissableMoves(currentState, worldSize)
-    prob = transitionProbability(action, currentState, newStates)
+    newStates = admissableMoves(currentState, obstacleSet, worldSize)
     rewards = expectedReward(newStates)
-    index = 0
-    for state in newStates:
-        r = state[0]
-        c = state[1]
-        valueFunciton[r][c] = prob[index] * \
-            (rewards[index] + gamma * valueHolder[r][c])
-        index += 1
-
-    return valueFunciton
+    newValues = [valueFunciton[index] for index in newStates]
+    stateIndex = range(len(newValues))
+    
+    # Loop over actions
+    for action in actionPrimatives:
+        prob = transitionProbability(action, currentState, newStates)
+        actionOutcomes =  [prob[i] * (rewards[i] + newValues[i]) 
+                 for i in stateIndex]
+        qFunction.append( sum(actionOutcomes) )
+    return qFunction
 
 
 def transitionProbability(action, state, newStates):
-    pos = state + action
-    dist = [max(
-        sys.float_info.epsilon,
-        (point[0]-pos[0])**2 + (point[1]-pos[1]) ** 2)
-        for point in newStates]
-    prob = np.ones(len(dist))
-    prob /= (dist)
-    # sum over columns
+    pos = ( state[0] + action[0] , state[1] + action[1] )
+    size = max(1, len(newStates))
+    prob = [(1 if state == pos else 1/size) for state in newStates]
+    # Normalize prob
+    norm = 1.0 / sum(prob)
+    prob = [ i * norm for i in prob ]
     return(prob)
 
 
 def expectedReward(newStates):
 
-    rewards = np.ones(len(newStates)) * -1
+    rewards = [-1] * len(newStates)
     return(rewards)
 
 
-def admissableMoves(state, worldSize):
-
+def admissableMoves(state, obstacleSet, worldSize):
+    # Needs rewrite for speed and obstacles.
+    # Maybe use another dic { (r,c): [ ]}
     r = int(state[0])
     c = int(state[1])
     rows = [r]
     cols = [c]
     newStates = []
     # rows
-    if r > 0:
-        rows.append(r - 1)
-    if r < worldSize - 1:  # indexed 0:wS-1
-        rows.append(r + 1)
+    if r > 0: rows.append(r - 1)
+    if r < worldSize - 1: rows.append(r + 1)
     # cols
-    if c > 0:
-        cols.append(c - 1)
-    if c < (worldSize - 1):  # indexed 0:wS-1
-        cols.append(c + 1)
+    if c > 0: cols.append(c - 1)
+    if c < (worldSize - 1): cols.append(c + 1)
     # package for cartesian product
     for newR in rows:
         for newC in cols:
-            nextState = [newR, newC]
-            newStates.append(nextState)
-    newStates = np.array(newStates)
+            nextState = (newR, newC)
+            if nextState not in obstacleSet:
+                newStates.append(nextState)
     return(newStates)
 
 
-def valueIteration(worldSize, epsilon=0.00001, gamma=1.0):
-
-    actionPrimatives = np.array(
-        [[1, 0], [-1, 0], [0, 1], [0, -1], [0, 0], [-1, -1], [1, 1], [-1, 1], [1, -1]])
-
+def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
+    center = math.floor(worldSize/2)
+    goalPoint = (0,0)#(center,center)
+    obstacleSet = { (3,3), (4,4), (3,4), (4,3), (worldSize-1, worldSize-2)}
+    actionPrimatives = [(1, 0), (-1, 0), (0, 1), (0, -1),
+                        (0, 0), (-1, -1), (1, 1), (-1, 1), (1, -1)]
+    
+    # Policy(state) dict int
+    #Init to stationary action
+    worldIterator = [(i//worldSize, i%worldSize) for i in  range(worldSize**2)]
+    policy = { state:(0,0) for state in worldIterator }
+    
+    # Value function init
     valueFunction = np.zeros([worldSize, worldSize])
-    newValueFunction = np.zeros([worldSize, worldSize])
+    valueFunction[goalPoint] = 1
+    holdValueFunction = np.zeros([worldSize, worldSize])
 
-    # init
+    # Init
     convergence = False  # min( dV < epsilon ), force at least 1 iteration.
-
-    while(not convergence):
-
+    iterations = 0
+    
+    # Hot loop
+    while( iterations < 10): #not convergence):
+        
         # simultanious update
-        for row in range(0, worldSize - 1):
-            for col in range(0, worldSize - 1):
-                for action in actionPrimatives:
-                    state = np.array([row, col])
-                    newValueFunction = lookAhead(
-                        valueFunction, action, state, gamma)
+        for state in worldIterator:
+
+            if state == goalPoint: continue
+            # Skip obstacle points
+            if state in obstacleSet:
+                valueFunction[state] = None
+                policy[state] = (0, 0)
+                continue
+        
+            qFunction = lookAhead(valueFunction, obstacleSet, 
+                                  actionPrimatives, state)
+            
+            # find max and argmax of q. Lists are w/o built in max :(
+            f = lambda i:qFunction[i]
+            argMax = max(range(len(qFunction)), key = f )
+            actMax = actionPrimatives[argMax]
+            print('main::valueIteration actmax: ', actMax)
+            print('main::valueIteration qFunction: ', qFunction)
+
+            
+            # Update Values
+            holdValueFunction[state] = max( qFunction )
+            
+            # Update Policy
+            policy[state] = actMax
+
         # close out
-        # min bc reward is <= 0
-        diff = newValueFunction - valueFunction
-        maxDifference = diff.min()
+        diff = abs( holdValueFunction - valueFunction )
+        maxDifference = np.nanmax(diff)
         convergence = maxDifference <= epsilon
-        valueFunction = newValueFunction
+        print('v_k+1(s) - v_k(s) = ', maxDifference)
+        
+        # Update values
+        holdValueFunction = valueFunction.copy()    
+        iterations += 1
+        # Output
+        print('Iterations Passed: ', iterations)
+        
+        # plot it
+        # Bounds
+        minValue = np.nanmin(valueFunction)
+        maxValue = np.nanmax(valueFunction)
+        
+        figValue, axValue = plt.subplots(figsize=(20,20))
+        sns.heatmap(valueFunction, vmin = minValue, vmax=maxValue, annot=True, fmt="0.2f", linewidths=.01, ax=axValue)
+        
+        figPolicy, axPolicy = plt.subplots(figsize=(20,20))
+        X = [ state[0] for state in worldIterator]
+        Y = [ state[1] for state in worldIterator]
+        U = [ policy[state][0] for state in worldIterator]
+        V = [ policy[state][1] for state in worldIterator]
+        q = axPolicy.quiver(X,Y,U,V)
+        
+        plt.pause(0.05)
+        plt.show()
     return valueFunction
 
 # end valueIteration()
@@ -128,7 +178,8 @@ def valueIteration(worldSize, epsilon=0.00001, gamma=1.0):
 # run it
 value = valueIteration(20)
 
-# plot it
-plt.imshow(value)
-plt.colorbar()
-plt.show()
+
+
+
+
+# %%
