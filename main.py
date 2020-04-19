@@ -92,10 +92,10 @@ def admissableMoves(state, obstacleSet, worldSize):
 
 def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
     center = math.floor(worldSize/2)
-    goalPoint = (0,0)#(center,center)
+    goalPoint = (center,center)
     obstacleSet = { (3,3), (4,4), (3,4), (4,3), (worldSize-1, worldSize-2)}
-    actionPrimatives = [(1, 0), (-1, 0), (0, 1), (0, -1),
-                        (0, 0), (-1, -1), (1, 1), (-1, 1), (1, -1)]
+    actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
+                         (-1, -1), (1, 1), (-1, 1), (1, -1)]
     
     # Policy(state) dict int
     #Init to stationary action
@@ -105,7 +105,7 @@ def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
     # Value function init
     valueFunction = np.zeros([worldSize, worldSize])
     valueFunction[goalPoint] = 1
-    holdValueFunction = np.zeros([worldSize, worldSize])
+    holdValueFunction = valueFunction.copy()
 
     # Init
     convergence = False  # min( dV < epsilon ), force at least 1 iteration.
@@ -124,7 +124,7 @@ def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
                 policy[state] = (0, 0)
                 continue
         
-            qFunction = lookAhead(valueFunction, obstacleSet, 
+            qFunction = lookAhead(holdValueFunction, obstacleSet, 
                                   actionPrimatives, state)
             
             # find max and argmax of q. Lists are w/o built in max :(
@@ -136,7 +136,7 @@ def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
 
             
             # Update Values
-            holdValueFunction[state] = max( qFunction )
+            valueFunction[state] = max( qFunction )
             
             # Update Policy
             policy[state] = actMax
