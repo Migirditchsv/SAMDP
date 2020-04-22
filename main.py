@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 '''
 SaMDP: Sam's baic MDP formulation using Value Iteration
 Input: worldSize, epsilon, gamma
@@ -21,6 +23,7 @@ Python 3.7
 '''
 # Imports
 import math # floor
+import random # random.sample for obstacle generation
 import sys  # sys epsilon
 import numpy as np  # valueFunction representation
 import matplotlib.pyplot as plt  # vis tool
@@ -90,16 +93,19 @@ def admissableMoves(state, obstacleSet, worldSize):
     return(newStates)
 
 
-def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
+def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
     center = math.floor(worldSize/2)
     goalPoint = (center,center)
-    obstacleSet = { (3,3), (4,4), (3,4), (4,3), (worldSize-1, worldSize-2)}
+    
+    # flat list of states, useful for comprehensions
+    worldIterator = [(i//worldSize, i%worldSize) for i in  range(worldSize**2)]
+    obstacleSet = set( random.sample(worldIterator, 5 * worldSize) )
+    if goalPoint in obstacleSet: obstacleSet.remove(goalPoint)
     actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
                          (-1, -1), (1, 1), (-1, 1), (1, -1)]
     
     # Policy(state) dict int
     #Init to stationary action
-    worldIterator = [(i//worldSize, i%worldSize) for i in  range(worldSize**2)]
     policy = { state:(0,0) for state in worldIterator }
     
     # Value function init
@@ -112,7 +118,7 @@ def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
     iterations = 0
     
     # Hot loop
-    while( iterations < 10): #not convergence):
+    while( not convergence):
         
         # simultanious update
         for state in worldIterator:
@@ -131,8 +137,6 @@ def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
             f = lambda i:qFunction[i]
             argMax = max(range(len(qFunction)), key = f )
             actMax = actionPrimatives[argMax]
-            print('main::valueIteration actmax: ', actMax)
-            print('main::valueIteration qFunction: ', qFunction)
 
             
             # Update Values
@@ -145,13 +149,12 @@ def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
         diff = abs( holdValueFunction - valueFunction )
         maxDifference = np.nanmax(diff)
         convergence = maxDifference <= epsilon
-        print('v_k+1(s) - v_k(s) = ', maxDifference)
         
         # Update values
         holdValueFunction = valueFunction.copy()    
         iterations += 1
         # Output
-        print('Iterations Passed: ', iterations)
+        print('Iterations Passed: ', iterations, 'delta max: ', maxDifference)
         
         # plot it
         # Bounds
@@ -160,16 +163,24 @@ def valueIteration(worldSize, epsilon=0.0001, gamma=1.0):
         
         figValue, axValue = plt.subplots(figsize=(20,20))
         sns.heatmap(valueFunction, vmin = minValue, vmax=maxValue, annot=True, fmt="0.2f", linewidths=.01, ax=axValue)
+        plt.pause(0.05)
+        plt.show()
+        plt.close(figValue)
         
         figPolicy, axPolicy = plt.subplots(figsize=(20,20))
         X = [ state[0] for state in worldIterator]
         Y = [ state[1] for state in worldIterator]
         U = [ policy[state][0] for state in worldIterator]
         V = [ policy[state][1] for state in worldIterator]
+        #U.reverse()
+        #V.reverse()
         q = axPolicy.quiver(X,Y,U,V)
+        #plt.gca().invert_yaxis()
+        #plt.gca().invert_xaxis()
         
         plt.pause(0.05)
         plt.show()
+        plt.close(figPolicy)
     return valueFunction
 
 # end valueIteration()
