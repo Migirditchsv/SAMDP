@@ -84,7 +84,6 @@ def admissableMoves(state, obstacleSet, worldSize):
     # cols
     if c > 0: cols.append(c - 1)
     if c < (worldSize - 1): cols.append(c + 1)
-    # package for cartesian product
     for newR in rows:
         for newC in cols:
             nextState = (newR, newC)
@@ -95,7 +94,7 @@ def admissableMoves(state, obstacleSet, worldSize):
 
 def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
     center = math.floor(worldSize/2)
-    goalPoint = (center,center)
+    goalPoint = (0,0) #(center,center)
     
     # flat list of states, useful for comprehensions
     worldIterator = [(i//worldSize, i%worldSize) for i in  range(worldSize**2)]
@@ -168,13 +167,15 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
         plt.close(figValue)
         
         figPolicy, axPolicy = plt.subplots(figsize=(20,20))
-        X = [ state[0] for state in worldIterator]
-        Y = [ state[1] for state in worldIterator]
-        U = [ policy[state][0] for state in worldIterator]
-        V = [ policy[state][1] for state in worldIterator]
+        # (row, col) coordinate form in world iterator
+        X = [ state[1] for state in worldIterator]
+        Y = [ state[0] for state in worldIterator]
+        U = [ policy[state][1] for state in worldIterator]
+        V = [ -policy[state][0] for state in worldIterator]
         #U.reverse()
         #V.reverse()
-        q = axPolicy.quiver(X,Y,U,V)
+        q = axPolicy.quiver(X,Y,U,V, scale=25)
+        axPolicy.set_ylim(axPolicy.get_ylim()[::-1]) 
         #plt.gca().invert_yaxis()
         #plt.gca().invert_xaxis()
         

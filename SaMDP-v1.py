@@ -6,6 +6,8 @@ Created on Mon Apr 20 11:27:27 2020
 @author: sam
 """
 import numpy as np
+import math # floor for terrain generation
+import random # random obstacle generation
 
 class SAMDP:
     ''''SAMDP: Sam's MDP readable and editable MDP-VI solver.
@@ -28,28 +30,29 @@ class SAMDP:
     
         # Safety checks
         #eventually upgrade to handle rectangular 
-        [self.rowSize, self.colSize] = valueFunciton.shape
-        if rSize == cSize: worldSize = rSize
-        else:sys.exit('Error in SAMDP.__init__: rowSize!=colSize')
+        [self.rowSize, self.colSize] = stateSpace.shape
+        if self.rowSize != self.colSize:
+            sys.exit('Error in SAMDP.__init__: rowSize!=colSize')
         
         # Self copies
         self.vFunction = _stateSpace # Init from state space
         self.actionPrimatives = _actionPrimatives
         self.transitionModel = _transitionModel
-        self.epsiolon = _epsilon
+        self.epsilon = _epsilon
         
         # Internal Params
         self._worldSize = self.rowSize * self.colSize
         self._stateIterator = [(i//self.colSize, i%self.rowSize)
-                          for i in  range(worldSize)]
+                          for i in  range(self._worldSize)]
         _obstacleSet = { state for state in self._stateIterator
                         if self.vFunction[state] != None}
         
         #public Params
-        self.policy = {state:self._actionPrimatives[0]
+        self.policy = {state:self.actionPrimatives[0]
                        for state in self._stateIterator}
-        self.vFunction = {state:self.stateSpace[state]
-                          for state in self._stateIterator}
+
+    def valueIterationStep():
+        
         
         
 ## Driver functions
@@ -64,8 +67,8 @@ def stateSpaceGenerator(worldSize, obstacleFraction):
     
     # flat list of states, useful for comprehensions
     worldIterator = [(i//worldSize, i%worldSize) for i in  range(worldSize**2)]
-    obstacleSet = set( random.sample(worldIterator,
-                                     obstacleFraction * ( worldSize**2 ) ) )
+    obstacleNumber = int(obstacleFraction * ( worldSize**2 ))
+    obstacleSet = set( random.sample(worldIterator, k=obstacleNumber ) )
     if goalPoint in obstacleSet: obstacleSet.remove(goalPoint)
 
     stateSpace = np.zeros((worldSize,worldSize))
@@ -77,16 +80,17 @@ def stateSpaceGenerator(worldSize, obstacleFraction):
     
     return(stateSpace)
 
-# ActionPrimatives
-actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
-                         (-1, -1), (1, 1), (-1, 1), (1, -1)]
+
 # Transition model
-def transitionModel( stateSpace, actionPrimatives, noiseLevel):
+def transitionModelGenerator( stateSpace, actionPrimatives, noiseLevel):
+    
+    transition= {}
     
     (rowSize, colSize) = stateSpace.shape
+    worldSize = rowSize 
     
-    for r in rowSize:
-        for c in colSize:
+    for r in range(rowSize):
+        for c in range(colSize):
             
             state = (r,c)
             
@@ -96,10 +100,10 @@ def transitionModel( stateSpace, actionPrimatives, noiseLevel):
             accessibleStates = []
             # rows
             if r > 0: rows.append(r - 1)
-            if r < worldSize - 1: rows.append(r + 1)
+            if r < (worldSize - 2): rows.append(r + 1)
             # cols
             if c > 0: cols.append(c - 1)
-            if c < (worldSize - 1): cols.append(c + 1)
+            if c < (worldSize - 2): cols.append(c + 1)
             for newR in rows:
                 for newC in cols:
                     nextState = (newR, newC)
@@ -114,13 +118,18 @@ def transitionModel( stateSpace, actionPrimatives, noiseLevel):
                         for checkState in accessibleStates ]
                 norm =  1.0 / sum(prob)
                 prob = [ i * norm for i in prob ]
-                stateActionUpdatePDF = [ ( newState[i],prob[i] )
+                stateActionUpdatePDF = [ ( accessibleStates[i],prob[i] )
                                         for i in range(len(accessibleStates))]
                 transition[(state, action)] = stateActionUpdatePDF
     return(transition)
     
 
+## Driver Script
+stateSpace = stateSpaceGenerator(10, 0.3)
 
-## Build it
+actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
+                         (-1, -1), (1, 1), (-1, 1), (1, -1)]
+
+transitionModel = transitionModelGenerator(stateSpace, actionPrimatives, 0.2)
     
-jersy = SAMDP( newJersey, badDriver, shittyRoads,
+demo = SAMDP(stateSpace, actionPrimatives, transitionModel)
