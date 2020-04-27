@@ -22,12 +22,14 @@ migirditch@gmail.com
 Python 3.7
 '''
 # Imports
-import math # floor
+import os # frameRender folder check
+import math as m # floor, ceil and log for gif indexing
 import random # random.sample for obstacle generation
 import sys  # sys epsilon
 import numpy as np  # valueFunction representation
 import matplotlib.pyplot as plt  # vis tool
 import seaborn as sns
+
 
 # Support functions
 def lookAhead(valueFunciton, obstacleSet,actionPrimatives, currentState):
@@ -93,8 +95,8 @@ def admissableMoves(state, obstacleSet, worldSize):
 
 
 def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
-    center = math.floor(worldSize/2)
-    goalPoint = (0,0) #(center,center)
+    center = m.floor(worldSize/2)
+    goalPoint = (0,worldSize-1) #(center,center)
     
     # flat list of states, useful for comprehensions
     worldIterator = [(i//worldSize, i%worldSize) for i in  range(worldSize**2)]
@@ -115,9 +117,12 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
     # Init
     convergence = False  # min( dV < epsilon ), force at least 1 iteration.
     iterations = 0
+    # fig,(axPolicy, axValue) = plt.subplots(nrows=1,ncols=2,
+    #                                        figsize=(50,30))
+    frames = [] # Frames for gif output
     
     # Hot loop
-    while( not convergence):
+    while(iterations<50):#(not convergence):
         
         # simultanious update
         for state in worldIterator:
@@ -156,17 +161,15 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
         print('Iterations Passed: ', iterations, 'delta max: ', maxDifference)
         
         # plot it
+        fig,(axPolicy, axValue) = plt.subplots(nrows=1,ncols=2,
+                                           figsize=(50,30))
         # Bounds
         minValue = np.nanmin(valueFunction)
         maxValue = np.nanmax(valueFunction)
         
-        figValue, axValue = plt.subplots(figsize=(20,20))
-        sns.heatmap(valueFunction, vmin = minValue, vmax=maxValue, annot=True, fmt="0.2f", linewidths=.01, ax=axValue)
-        plt.pause(0.05)
-        plt.show()
-        plt.close(figValue)
+        # axPolicy.cla()
+        # axValue.clear() # labels are counted as axes and need to be removed
         
-        figPolicy, axPolicy = plt.subplots(figsize=(20,20))
         # (row, col) coordinate form in world iterator
         X = [ state[1] for state in worldIterator]
         Y = [ state[0] for state in worldIterator]
@@ -176,19 +179,44 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
         #V.reverse()
         q = axPolicy.quiver(X,Y,U,V, scale=25)
         axPolicy.set_ylim(axPolicy.get_ylim()[::-1]) 
-        #plt.gca().invert_yaxis()
-        #plt.gca().invert_xaxis()
+        v = sns.heatmap(valueFunction, vmin = minValue, vmax=maxValue,
+                        annot=True, cbar=False, fmt="0.2f", linewidths=.01,
+                        ax=axValue, annot_kws={"size": 4})
         
-        plt.pause(0.05)
-        plt.show()
-        plt.close(figPolicy)
+        #fig.canvas.draw()
+        frames.append(fig)#([axPolicy, axValue,])
+        plt.close(fig)
+        
+    #close out
+    # check for and create file
+    folderPath = './RenderingFrames'
+    if not os.path.exists(folderPath):
+        os.mkdir(folderPath)
+        
+        # ffmpeg crashes if it tries to write to an existing file
+    if os.path.exists('out.mp4'):
+        os.remove('out.mp4')
+        
+    #order of mag. frame index 0 padding
+    maxFrames = m.ceil( m.log(len(frames)) / m.log(10) )
+    frameIndex = 1
+    for figure in frames:
+        frameLabel = str(frameIndex).zfill(maxFrames)
+        fileName = 'img'+frameLabel+'.png'
+        filePath = folderPath+'/'+fileName
+        print('saving: ', filePath)
+        figure.savefig(filePath) 
+        frameIndex += 1
+    # Stitch into gif
+    command = 'ffmpeg -framerate 1/30 -i '+folderPath+'/img%0'+str(maxFrames)+'d.png -c:v libx264 out.mp4'
+    os.system( command )
     return valueFunction
 
 # end valueIteration()
 
 
 # run it
-value = valueIteration(20)
+value = valueIteration(20, epsilon= 0.9)
 
 
 
