@@ -8,6 +8,8 @@ Created on Mon Apr 20 13:27:14 2020
 import samdp
 import os  # play gif at end
 
+epsilon = 0.001
+
 stateSpace = samdp.stateSpaceGenerator(20, 0.5)
 
 actionPrimatives = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
@@ -19,21 +21,13 @@ transitionModel = samdp.transitionModelGenerator(
 demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
 demo.renderFrame()
 
-while demo.solverIterations < 60:  # demo.maxDifference > 0.000001:
+while demo.maxDifference > epsilon:
 
     demo.hybridIterationStep()
     stepNum = demo.solverIterations
+    hold = demo.valueFunction
 
-    if stepNum < 10:
-        demo.renderFrame()
-    elif stepNum < 20 and stepNum % 3 == 0:
-        demo.renderFrame()
-    elif stepNum < 70 and stepNum % 4 == 0:
-        demo.renderFrame()
-
-    if demo.frameBuffer % 20 == 0:
-        # One unwritten frame wastes ~10mb of ram, but writing is slow
-        demo.writeOutFrameBuffer()
+demo.renderFrame()
 
 # final frame buffer flush
 demo.writeOutFrameBuffer()

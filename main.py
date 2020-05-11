@@ -67,7 +67,6 @@ def transitionProbability(action, state, newStates):
 
 
 def expectedReward(newStates):
-
     rewards = [-1] * len(newStates)
     return(rewards)
 
@@ -94,13 +93,13 @@ def admissableMoves(state, obstacleSet, worldSize):
     return(newStates)
 
 
-def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
+def valueIteration(worldSize, epsilon=0.01, gamma=0.9):
     center = m.floor(worldSize/2)
     goalPoint = (0,worldSize-1) #(center,center)
     
     # flat list of states, useful for comprehensions
     worldIterator = [(i//worldSize, i%worldSize) for i in  range(worldSize**2)]
-    obstacleSet = set( random.sample(worldIterator, 5 * worldSize) )
+    obstacleSet = { (0,i) for i in range(1,worldSize-3)}#set( random.sample(worldIterator, 5 * worldSize) )
     if goalPoint in obstacleSet: obstacleSet.remove(goalPoint)
     actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
                          (-1, -1), (1, 1), (-1, 1), (1, -1)]
@@ -122,7 +121,7 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
     frames = [] # Frames for gif output
     
     # Hot loop
-    while(iterations<50):#(not convergence):
+    while(not convergence):
         
         # simultanious update
         for state in worldIterator:
@@ -141,10 +140,9 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
             f = lambda i:qFunction[i]
             argMax = max(range(len(qFunction)), key = f )
             actMax = actionPrimatives[argMax]
-
             
             # Update Values
-            valueFunction[state] = max( qFunction )
+            valueFunction[state] = gamma * max( qFunction )
             
             # Update Policy
             policy[state] = actMax
@@ -192,6 +190,10 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
     folderPath = './RenderingFrames'
     if not os.path.exists(folderPath):
         os.mkdir(folderPath)
+    else:
+        command = 'rm -rf '+folderPath
+        os.system(command)
+        os.mkdir(folderPath)
         
         # ffmpeg crashes if it tries to write to an existing file
     if os.path.exists('out.mp4'):
@@ -205,19 +207,23 @@ def valueIteration(worldSize, epsilon=0.01, gamma=1.0):
         fileName = 'img'+frameLabel+'.png'
         filePath = folderPath+'/'+fileName
         print('saving: ', filePath)
-        figure.savefig(filePath) 
+        figure.savefig(filePath, bbox_inches = 'tight', pad_inches = 0) 
         frameIndex += 1
-    # Stitch into gif
-    command = 'ffmpeg -framerate 1/30 -i '+folderPath+'/img%0'+str(maxFrames)+'d.png -c:v libx264 out.mp4'
-    os.system( command )
-    return valueFunction
+
+    return valueFunction, maxFrames, folderPath
 
 # end valueIteration()
 
+def gifStitch(maxFrames,folderPath):
+
+    # Stitch into gif
+    command = 'ffmpeg -framerate 2 -i '+folderPath+'/img%0'+str(maxFrames)+'d.png -c:v libx264 -r 2 out.mp4'
+    os.system( command )
 
 # run it
-value = valueIteration(20, epsilon= 0.9)
-
+value, maxFrames, folderPath = valueIteration(20, epsilon= 0.01, gamma = 0.5)
+del value
+gifStitch(maxFrames, folderPath)
 
 
 
