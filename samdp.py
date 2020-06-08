@@ -31,9 +31,9 @@ class SAMDP:
     '''
 
     # Universal Control Parameters
-    #goalValue = 1.0  # value of _stateSpace to look for in id'ing goal pts.
-    #obstacleValue = -0.1  # value of inaccessible points
-    #passiveValue = 0.0 # value of transitioning to a normal space
+    # goalValue = 1.0  # value of _stateSpace to look for in id'ing goal pts.
+    # obstacleValue = -0.1  # value of inaccessible points
+    # passiveValue = 0.0 # value of transitioning to a normal space
     gamma = 1.0  # exponential discount factor
     maxSteps = 1000  # Max allowable solver steps
     # num of zeros to pad frame counter
@@ -46,6 +46,7 @@ class SAMDP:
         # Safety checks
         # eventually upgrade to handle rectangular
         [self.rowSize, self.colSize] = _stateSpace.shape
+        self.worldSize = self.rowSize * self.colSize
         if self.rowSize != self.colSize:
             sys.exit('Error in SAMDP.__init__: rowSize!=colSize')
         # check for and create data file
@@ -69,43 +70,39 @@ class SAMDP:
         self.epsilon = _epsilon
 
         # Internal Params
-        self._worldSize = self.rowSize * self.colSize
         self._stateIterator = [(i//self.colSize, i % self.rowSize)
-                               for i in range(self._worldSize)]
+                               for i in range(self.worldSize)]
         self._actionNorm = 1.0 / len(self.actionPrimatives)
-         # value of _stateSpace to look for in id'ing goal pts.
-        self.goalValue = np.nanmax(self.valueFunction )
-         # value of inaccessible points
-        self.obstacleValue = np.nanmin(self.valueFunction)
+        # value of _stateSpace to look for in id'ing goal pts.
+        self.goalValue = np.nanmax(self.valueFunction)
+        # value of inaccessible points
+        self.obstacleValue = float(np.nanmin(self.valueFunction))
 
-        # public structs
+        # public vars
         self.frameBuffer = 0  # number of frames being stored in ram
         self.frameIndex = 1
         self.solverIterations = 0
+        self.updateList = self._stateIterator  # change in loop for partial update
         self.goalSet = {state for state in self._stateIterator
                         if self.valueFunction[state] == self.goalValue}
         self.obstacleSet = {state for state in self._stateIterator
                             if self.valueFunction[state] == self.obstacleValue}
+        self.normalSet = {state for state in self._stateIterator
+                          if state not in self.obstacleSet.union(self.goalSet)}
         self.policy = {state: self.actionPrimatives[0]
                        for state in self._stateIterator}
         self.maxDifference = 9999999999999
+        # estimate of convergence condition
+        self.convergenceThresholdEstimate = (
+            (self.goalValue - self.obstacleValue) / self.worldSize)**3
 
         # Internal data objects
         self._frames = []  # list of plots to save
         self._frameIndex = 0
 
-    def hybridIterationStep(self):
-        # A sumultainous update to value and then policy optimimzation
-        for state in self._stateIterator:
-
-            # Skip goal states
-            if state in self.goalSet:
-                self.policy[state] = (0,0)
-                continue
-            # Skip obstacle points
-            if state in self.obstacleSet:
-                self.policy[state] = (0,0)
-                continue
+    def policyIterationStep(self):
+        for state in self.updateList:
+            # Lookahead
             qFunction = self._lookAhead(state)
 
             # find max and argmax of q. Lists are w/o built in max :(
@@ -113,11 +110,34 @@ class SAMDP:
             argMax = max(range(len(qFunction)), key=f)
             actMax = self.actionPrimatives[argMax]
 
-            # Update Values
-            self.valueFunction[state] =  max(qFunction)
+            # Update Policy
+            self.policy[state] = actMax
+
+    def hybridIterationStep(self):
+        # A sumultainous update to value and then policy optimimzation
+        for state in self.updateList:  # self._stateIterator:
+
+            # Skip goal states
+            if state in self.goalSet:
+                self.policy[state] = (0, 0)
+                continue
+
+            # Lookahead
+            qFunction = self._lookAhead(state)
+
+            # find max and argmax of q. Lists are w/o built in max :(
+            def f(i): return qFunction[i]
+            argMax = max(range(len(qFunction)), key=f)
+            actMax = self.actionPrimatives[argMax]
 
             # Update Policy
             self.policy[state] = actMax
+
+            # Update Values if not obstacle
+            if state in self.obstacleSet:
+                continue
+            self.renderFrame()
+            self.valueFunction[state] = max(qFunction)
 
         # close out
         diff = abs(self.holdValueFunction - self.valueFunction)
@@ -127,12 +147,12 @@ class SAMDP:
         # Update values
         self.holdValueFunction = self.valueFunction.copy()
         self.solverIterations += 1
-        print("SAMDP.hybridIterationStep step: ", self.solverIterations,
-              "max difference: ", self.maxDifference)
+        # print("SAMDP.hybridIterationStep step: ", self.solverIterations,
+        #      "max difference: ", self.maxDifference)
 
     def _lookAhead(self, currentState):
         newStates = self._admissableMoves(currentState)
-        rewards = [ self.rewards[currentState] ]* len(newStates)
+        rewards = [self.rewards[currentState]] * len(newStates)
         newValues = [self.holdValueFunction[index] for index in newStates]
         stateIndex = range(len(newValues))
 
@@ -146,10 +166,7 @@ class SAMDP:
             actionOutcomes = [prob[i] * (rewards[i] + self.gamma * newValues[i])
                               for i in stateIndex]
             qFunction.append(sum(actionOutcomes))
-        # qFunction is expectation value for each outcome. Must norm by
-        #   #terms = #newStates
-        norm = [1.0 / len(newStates)] * len(newStates)
-        qFunction = [qFunction[i] * norm[i] for i in range(len(self.actionPrimatives))]
+
         return qFunction
 
     def _admissableMoves(self, currentState):
@@ -173,15 +190,14 @@ class SAMDP:
         for newR in rows:
             for newC in cols:
                 nextState = (newR, newC)
-                # if nextState not in self.obstacleSet:
                 newStates.append(nextState)
-        return(newStates)
+        return(newStates.copy())
 
     def _transitionProbability(self, action, state, newStates):
         # default transitions, to be depreciated.
         pos = (state[0] + action[0], state[1] + action[1])
         size = max(1, len(newStates) - 1)
-        prob = [(1.0 if state == pos else 0.0/size) for state in newStates]
+        prob = [1.0 if state == pos else (0.0/size) for state in newStates]
         # Normalize prob
         if sum(prob) == 0:
             return(prob)
@@ -196,9 +212,9 @@ class SAMDP:
         fig, (axPolicy, axValue) = plt.subplots(nrows=1, ncols=2,
                                                 figsize=(50, 30))
         # Bounds
-        #meanVal = np.nanmean(self.valueFunction)
-        #minValue = meanVal - ( 0.5 * abs(meanVal) )
-        #maxValue = meanVal + ( 0.5 * abs(meanVal) )
+        # meanVal = np.nanmean(self.valueFunction)
+        # minValue = meanVal - ( 0.5 * abs(meanVal) )
+        # maxValue = meanVal + ( 0.5 * abs(meanVal) )
 
         # (row, col) coordinate form in world iterator
         X = [state[1] for state in self._stateIterator]
@@ -208,10 +224,14 @@ class SAMDP:
         axPolicy.quiver(X, Y, U, V, scale=25)
         axPolicy.set_ylim(axPolicy.get_ylim()[::-1])
         sns.heatmap(self.valueFunction,
-                        #vmin=minValue, vmax=maxValue,
-                        annot=True, cbar=False, fmt="0.2f", linewidths=.01,
-                        ax=axValue, annot_kws={"size": 20})
+                    # vmin=minValue, vmax=maxValue,
+                    annot=True, cbar=False, fmt="0.2f", linewidths=.01,
+                    ax=axValue, annot_kws={"size": 20})
 
+        # title
+        string = ['Frame Number:', str(self.solverIterations)]
+        string = ' '.join(string)
+        plt.suptitle(string, fontsize=50)
         # fig.canvas.draw()
         self._frames.append(fig)  # ([axPolicy, axValue,])
         plt.close(fig)
@@ -225,7 +245,7 @@ class SAMDP:
             frameLabel = str(self.frameIndex).zfill(self.frameMagnitude)
             fileName = 'img'+frameLabel+'.png'
             filePath = self.folderPath+'/'+fileName
-            print('saving: ', filePath)
+            #print('saving: ', filePath)
             figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
             self.frameIndex += 1
         # clear written frames
@@ -243,46 +263,119 @@ class SAMDP:
             str(self.frameMagnitude)+'d.png -g 8 -c:v libx264 -r 2 out.mp4'
         os.system(command)
 
+    def DijkstraValueSeed(self):
+        # Runs the dijkstra alg from the first goal state,
+        # moving along action primatives.
+
+        # Init values to lowest possible
+        dijkstraValue = {
+            state: self.obstacleValue if state not in self.goalSet
+            else self.goalValue
+            for state in self.normalSet}
+
+        return
+
+    def mfpt(self, selectionRatio, trials):
+        stepCutoff = len(self._stateIterator)
+        updateNumber = m.floor(stepCutoff * selectionRatio)
+        passageTimes = np.empty_like(self.valueFunction)
+        mfptRankedUpdates = [None] * updateNumber
+        # compute MFPT for every state
+        for checkState in self._stateIterator:
+            if checkState in self.obstacleSet:
+                continue
+            #print('mfpt checking state:', checkState, '\n')
+            rolloutStateIndicies = random.sample(
+                range(0, stepCutoff), k=trials)
+            for startIndex in rolloutStateIndicies:
+                state = self._stateIterator[startIndex]
+                stepCount = 0
+                # compute starting point score following transitionModel(policy(state))
+                while stepCount < stepCutoff:
+
+                    # stop incrementing counter and return
+                    if(state == checkState):
+                        break
+
+                    # hitting goal state is as good as hitting self
+                    if state in self.goalSet:
+                        break
+
+                    # Hitting obstacle is bad
+                    if state in self.obstacleSet:
+                        stepCount = stepCutoff
+                        break
+
+                    stepCount += 1
+                    action = self.policy[state]
+                    accessibleStates = self._admissableMoves(state)
+                    # make nparray not list
+                    probability = self._transitionProbability(
+                        action, state, accessibleStates).copy()
+                    stateRange = range(0, len(accessibleStates))
+                    stateIndex = np.random.choice(a=stateRange, p=probability)
+                    state = accessibleStates[stateIndex]
+                # end startState while
+                passageTimes[checkState] += stepCount
+            # end startState loop
+        # No need to normalize means if this is slow, purely for readability
+        passageTimes[checkState] /= stepCutoff
+        # end check state loop
+        # rank
+        index = 0
+        while index < updateNumber:
+            state = np.nanargmin(passageTimes)
+            # convert to tuple coordinate
+            state = (state//self.rowSize, state % self.colSize)
+            # add to update list
+            mfptRankedUpdates[index] = state
+            # disqualify state from subsequent selections
+            passageTimes[state] = stepCutoff + 1
+            index += 1
+
+        return mfptRankedUpdates
+
 # Driver functions
 
 # stateSpace
 
 
 def stateSpaceGenerator(worldSize, obstacleFraction):
-    
-    # parameters
-    goalValue = 10.0
-    obstacleValue = -(goalValue / worldSize**2)
-    passiveValue = -0.1 * obstacleValue
-    
+
+    # protections
     if obstacleFraction > 1.0 or obstacleFraction < 0.0:
         sys.exit(
             'Error in SAMDP stateSpaceGenerator: obstacleFraction must be between 0.0 and 1.0')
 
+    # the object
+    stateSpace = np.zeros((worldSize, worldSize))
+
+    # parameters
+    goalValue = 1.0
+    obstacleValue = -1.0 #-0.5 * (goalValue / worldSize**2)
+    passiveValue = obstacleValue / worldSize
     center = m.floor(worldSize/2.0)
-    
+    quarter = m.floor(center / 2.0)
+
     # Init
-    goalSet = {(0, worldSize-1), (0,worldSize-2), (1,worldSize-2), (1,worldSize-1)}
+    goalSet = {(0, worldSize-1), (0, worldSize-2),
+               (1, worldSize-2), (1, worldSize-1)}
     obstacleSet = set()
-    
+
     # flat list of states, useful for comprehensions
     stateIterator = [(i//worldSize, i % worldSize)
                      for i in range(worldSize**2)]
     obstacleNumber = int(obstacleFraction * (worldSize**2))
-    
+
     # Random obstacle
-    #obstacleSet = set(random.sample(stateIterator, k=obstacleNumber))
+    # obstacleSet = set(random.sample(stateIterator, k=obstacleNumber))
 
     # cross in the middle
-    quarter = m.floor(center / 2.0)
     for state in stateIterator:
-        BRow1 = ( state[0] > center - quarter ) and state[1] == center
-        BRow2 = ( state[0] < center + quarter ) and state[1] == center
-        BCol1 = ( state[1] > center - quarter ) and state[0] == center
-        BCol2 = ( state[1] < center + quarter ) and state[0] == center
-        if (BRow1 and BRow2) or (BCol1 and BCol2):
+        BRow1 = (state[0] > center - quarter) and state[1] == center
+        BRow2 = (state[0] < center + quarter) and state[1] == center
+        if (BRow1 and BRow2):
             obstacleSet.add(state)
-        
 
     # Walls along border
     for state in stateIterator:
@@ -296,13 +389,16 @@ def stateSpaceGenerator(worldSize, obstacleFraction):
         if goal in obstacleSet:
             obstacleSet.remove(goal)
 
-    stateSpace = np.zeros((worldSize, worldSize))
-
     for state in stateIterator:
+        # diagonal is not obstacle, but has 0.5 obstacle cost
+        condition = state[0] == (state[1]-3)
+        
         if state in obstacleSet:
             stateSpace[state] = obstacleValue
         elif state in goalSet:
             stateSpace[state] = goalValue
+        elif (condition):
+            stateSpace[state] = 0.5 * obstacleValue
         else:
             stateSpace[state] = passiveValue
 
@@ -354,14 +450,12 @@ def transitionModelGenerator(stateSpace, actionPrimatives, noiseLevel):
                                         for i in range(len(accessibleStates))]
                 transition[(state, action)] = stateActionUpdatePDF
     return(transition)
+    # Driver Script
+    # stateSpace = stateSpaceGenerator(10, 0.3)
 
+    # actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
+    #                          (-1, -1), (1, 1), (-1, 1), (1, -1)]
 
-# Driver Script
-# stateSpace = stateSpaceGenerator(10, 0.3)
+    # transitionModel = transitionModelGenerator(stateSpace, actionPrimatives, 0.2)
 
-# actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
-#                          (-1, -1), (1, 1), (-1, 1), (1, -1)]
-
-# transitionModel = transitionModelGenerator(stateSpace, actionPrimatives, 0.2)
-
-# demo = SAMDP(stateSpace, actionPrimatives, transitionModel)
+    # demo = SAMDP(stateSpace, actionPrimatives, transitionModel)
