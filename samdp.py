@@ -62,7 +62,7 @@ class SAMDP:
             os.remove('out.mp4')
 
         # Self copies
-        self.valueFunction = _stateSpace  # Init from state space
+        self.valueFunction = _stateSpace.copy()  # Init from state space
         self.holdValueFunction = np.copy(_stateSpace)
         self.rewards = np.copy(_stateSpace)
         self.actionPrimatives = _actionPrimatives
@@ -117,10 +117,12 @@ class SAMDP:
         # A sumultainous update to value and then policy optimimzation
         for state in self.updateList:  # self._stateIterator:
 
-            # Skip goal states
-            if state in self.goalSet:
-                self.policy[state] = (0, 0)
-                continue
+# =============================================================================
+#             # Skip goal states
+#             if state in self.goalSet:
+#                 self.policy[state] = (0, 0)
+#                 continue
+# =============================================================================
 
             # Lookahead
             qFunction = self._lookAhead(state)
@@ -136,7 +138,6 @@ class SAMDP:
             # Update Values if not obstacle
             if state in self.obstacleSet:
                 continue
-            self.renderFrame()
             self.valueFunction[state] = max(qFunction)
 
         # close out
@@ -245,7 +246,7 @@ class SAMDP:
             frameLabel = str(self.frameIndex).zfill(self.frameMagnitude)
             fileName = 'img'+frameLabel+'.png'
             filePath = self.folderPath+'/'+fileName
-            #print('saving: ', filePath)
+            print('saving: ', filePath)
             figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
             self.frameIndex += 1
         # clear written frames
@@ -266,12 +267,48 @@ class SAMDP:
     def DijkstraValueSeed(self):
         # Runs the dijkstra alg from the first goal state,
         # moving along action primatives.
+        
+        # unvisited states
+        unvisited = self.normalSet.copy()
+        # start from goal states
+        currentStates = self.goalSet
+        # fringe is empty
+        fringe = set()
 
         # Init values to lowest possible
-        dijkstraValue = {
-            state: self.obstacleValue if state not in self.goalSet
-            else self.goalValue
-            for state in self.normalSet}
+        dijkstraValue = np.empty_like(self.valueFunction)
+        for state in self._stateIterator:
+            if state in self.goalSet:
+                dijkstraValue[state] = self.goalValue
+            else:
+                dijkstraValue[state] = self.obstacleValue
+        
+        # Loop while unvisited not empty
+        while len(unvisited) > 0:
+            
+            # add to fringe from successor of current states
+            for state in currentStates:
+                # Add successors of state to fringe
+                successors = self._admissableMoves(state)
+                # update successors values and check if new fringe
+                for newState in successors:
+                    if newState in self.obstacleSet:
+                        continue
+                    if newState in self.goalSet:
+                        continue
+                    newValue = self.rewards[newState] + dijkstraValue[state]
+                    if newValue > dijkstraValue[newState]:
+                        dijkstraValue[newState] = newValue
+                    if newState in unvisited:
+                        unvisited.remove(newState)
+                        fringe.add(newState)
+            currentStates = fringe.copy()
+            fringe.clear()
+        
+        # Push dijkstra values into value function
+        self.valueFunction = dijkstraValue.copy()
+        self.holdValueFunction = dijkstraValue.copy()
+        
 
         return
 
@@ -340,12 +377,12 @@ class SAMDP:
 # stateSpace
 
 
-def stateSpaceGenerator(worldSize, obstacleFraction):
+def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
 
     # protections
     if obstacleFraction > 1.0 or obstacleFraction < 0.0:
         sys.exit(
-            'Error in SAMDP stateSpaceGenerator: obstacleFraction must be between 0.0 and 1.0')
+            'Error in samdp.py stateSpaceGenerator: obstacleFraction must be between 0.0 and 1.0')
 
     # the object
     stateSpace = np.zeros((worldSize, worldSize))
@@ -358,8 +395,7 @@ def stateSpaceGenerator(worldSize, obstacleFraction):
     quarter = m.floor(center / 2.0)
 
     # Init
-    goalSet = {(0, worldSize-1), (0, worldSize-2),
-               (1, worldSize-2), (1, worldSize-1)}
+    goalSet = {(0, worldSize-1), (1,worldSize-1)}
     obstacleSet = set()
 
     # flat list of states, useful for comprehensions
@@ -390,15 +426,22 @@ def stateSpaceGenerator(worldSize, obstacleFraction):
             obstacleSet.remove(goal)
 
     for state in stateIterator:
-        # diagonal is not obstacle, but has 0.5 obstacle cost
-        condition = state[0] == (state[1]-3)
+        # soft obstacle on top has 0.5*obstacle cost
+        feature1 = (state[0] <= center - quarter) and state[1] == center
+        # right of center horizontal hole
+        feature2 = (state[1] > center and
+                    state[1] != center + quarter and
+                    state[0] == center)
         
         if state in obstacleSet:
             stateSpace[state] = obstacleValue
         elif state in goalSet:
             stateSpace[state] = goalValue
-        elif (condition):
+        elif (feature1):
             stateSpace[state] = 0.5 * obstacleValue
+        elif (feature2):
+            obstacleSet.add(state)
+            stateSpace[state] = obstacleValue
         else:
             stateSpace[state] = passiveValue
 
