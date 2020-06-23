@@ -34,7 +34,7 @@ class SAMDP:
     # goalValue = 1.0  # value of _stateSpace to look for in id'ing goal pts.
     # obstacleValue = -0.1  # value of inaccessible points
     # passiveValue = 0.0 # value of transitioning to a normal space
-    gamma = 1.0  # exponential discount factor
+    gamma = 0.9  # exponential discount factor
     maxSteps = 1000  # Max allowable solver steps
     # num of zeros to pad frame counter
     frameMagnitude = m.ceil(m.log(maxSteps) / m.log(10))
@@ -89,6 +89,8 @@ class SAMDP:
                             if self.valueFunction[state] == self.obstacleValue}
         self.normalSet = {state for state in self._stateIterator
                           if state not in self.obstacleSet.union(self.goalSet)}
+        self.problemSet = {state for state in self._stateIterator
+                              if state not in self.goalSet}
         self.policy = {state: self.actionPrimatives[0]
                        for state in self._stateIterator}
         self.maxDifference = 9999999999999
@@ -117,12 +119,11 @@ class SAMDP:
         # A sumultainous update to value and then policy optimimzation
         for state in self.updateList:  # self._stateIterator:
 
-# =============================================================================
-#             # Skip goal states
-#             if state in self.goalSet:
-#                 self.policy[state] = (0, 0)
-#                 continue
-# =============================================================================
+
+            # Skip goal states
+            if state in self.goalSet:
+                self.policy[state] = (0, 0)
+                continue
 
             # Lookahead
             qFunction = self._lookAhead(state)
@@ -198,7 +199,7 @@ class SAMDP:
         # default transitions, to be depreciated.
         pos = (state[0] + action[0], state[1] + action[1])
         size = max(1, len(newStates) - 1)
-        prob = [1.0 if state == pos else (0.0/size) for state in newStates]
+        prob = [0.9 if state == pos else (0.1/size) for state in newStates]
         # Normalize prob
         if sum(prob) == 0:
             return(prob)
@@ -315,61 +316,42 @@ class SAMDP:
     def mfpt(self, selectionRatio, trials):
         stepCutoff = len(self._stateIterator)
         updateNumber = m.floor(stepCutoff * selectionRatio)
-        passageTimes = np.empty_like(self.valueFunction)
+        passageTimes = {state:[] for state in self._stateIterator}
         mfptRankedUpdates = [None] * updateNumber
         # compute MFPT for every state
-        for checkState in self._stateIterator:
-            if checkState in self.obstacleSet:
-                continue
-            #print('mfpt checking state:', checkState, '\n')
-            rolloutStateIndicies = random.sample(
-                range(0, stepCutoff), k=trials)
-            for startIndex in rolloutStateIndicies:
-                state = self._stateIterator[startIndex]
-                stepCount = 0
-                # compute starting point score following transitionModel(policy(state))
-                while stepCount < stepCutoff:
-
-                    # stop incrementing counter and return
-                    if(state == checkState):
-                        break
-
-                    # hitting goal state is as good as hitting self
-                    if state in self.goalSet:
-                        break
-
-                    # Hitting obstacle is bad
-                    if state in self.obstacleSet:
-                        stepCount = stepCutoff
-                        break
-
-                    stepCount += 1
-                    action = self.policy[state]
-                    accessibleStates = self._admissableMoves(state)
-                    # make nparray not list
-                    probability = self._transitionProbability(
-                        action, state, accessibleStates).copy()
-                    stateRange = range(0, len(accessibleStates))
-                    stateIndex = np.random.choice(a=stateRange, p=probability)
-                    state = accessibleStates[stateIndex]
-                # end startState while
-                passageTimes[checkState] += stepCount
-            # end startState loop
-        # No need to normalize means if this is slow, purely for readability
-        passageTimes[checkState] /= stepCutoff
-        # end check state loop
-        # rank
-        index = 0
-        while index < updateNumber:
-            state = np.nanargmin(passageTimes)
-            # convert to tuple coordinate
-            state = (state//self.rowSize, state % self.colSize)
-            # add to update list
-            mfptRankedUpdates[index] = state
-            # disqualify state from subsequent selections
-            passageTimes[state] = stepCutoff + 1
-            index += 1
-
+        
+        rolloutStateIndicies = random.sample(self._stateIterator, k=trials)
+     
+        for startIndex in rolloutStateIndicies: 
+             time = 0
+             state = startIndex
+             while time < stepCutoff:
+                 time += 1
+                 action = self.policy[state]
+                 state = tuple( [sum(x) for x in zip(state,action) ] )
+                 
+                 # if out of bounds, go to next starting state
+                 if state in self.goalSet:
+                     break
+                 elif state in self._stateIterator: 
+                     passageTimes[state].append(time)
+                 else:
+                     break
+        
+        # compute mfpts
+        for state in self._stateIterator:
+            hits = passageTimes[state]
+            hitNum = len(hits)
+            if hitNum == 0:
+                passageTimes[state] = stepCutoff
+            else:
+                passageTimes[state] = sum(hits) / hitNum
+        
+        # select top updateNumber states
+        for count in range(updateNumber):
+            mfptRankedUpdates[count] = min(passageTimes,
+                                           key = passageTimes.get)
+        
         return mfptRankedUpdates
 
 # Driver functions
