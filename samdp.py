@@ -312,8 +312,46 @@ class SAMDP:
         
 
         return
+    
+    def gradientRank(self, selectionRatio):
+        #check gradient for all states. Really is comparing max slope in value
+        #minus that direction's reward for non-obstacle neighbors
+        
+        # set rank size
+        selectionSize = m.floor( len(self._stateIterator) * selectionRatio )
+        gradientRank = []
+        
+        # map states to max derivatives in a dic
+        valueGradients = { state:0.0 for state in self.normalSet }
+        for state in self.problemSet:
+            
+            # Init values for state
+            stateValue = self.valueFunction[state]
+            maxValueGradient = 0
+            #find state neighbors
+            neighborSet = self._admissableMoves(state)
+            for neighbor in neighborSet:
+                reward = self.rewards[neighbor]
+            #compute value derivative for neighbor
+                neighborValue = self.valueFunction[neighbor]
+                derivative = abs(neighborValue - stateValue - reward)
+                if derivative > maxValueGradient:
+                    maxValueGradient = derivative
+            # store top gradient in dic
+            valueGradients[state] = maxValueGradient
+            
+        # Rank
+        for index in range(selectionSize):
+            state = max(valueGradients, key = valueGradients.get )
+            gradientRank.append(state)
+            valueGradients.pop(state)
+        
+        self.updateList = gradientRank.copy()
+        
+            
+        
 
-    def mfpt(self, selectionRatio, trials):
+    def mfptRank(self, selectionRatio, trials):
         stepCutoff = len(self._stateIterator)
         updateNumber = m.floor(stepCutoff * selectionRatio)
         passageTimes = {state:[] for state in self._stateIterator}
@@ -349,8 +387,10 @@ class SAMDP:
         
         # select top updateNumber states
         for count in range(updateNumber):
-            mfptRankedUpdates[count] = min(passageTimes,
-                                           key = passageTimes.get)
+            key = min(passageTimes, key = passageTimes.get)
+            mfptRankedUpdates[count] = key
+            # disqualify key from future updates
+            passageTimes.pop(key)
         
         return mfptRankedUpdates
 

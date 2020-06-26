@@ -7,21 +7,29 @@ Created on Mon Apr 20 13:27:14 2020
 """
 import time # testing and comparison
 import samdp
-import os  # play gif at end
+#import os  # play gif at end
 
 # Controls
 # side length of square state space
 environmentSize = 20
-# pre-seed value function?
+# pre-seed value function based on dijkstra distance?
 dijkstraSeed =  True
+# seed values by mfpt?
+mfptSeed = False
 # run mfpt analysis every X steps. It is expensive.
-mfptRefreshPeriod = 99999
+mfptRefreshPeriod = 999999
 # top X percent of mfpt scores to put in update list.
 mfptUpdateRatio = 0.3
 # Number of random starting states to compute each mfpt score from.
 mfptRolloutNumber = 30
+# seed starting values with a gradient minimizaiton?
+gradientSeed = True
+# Run value gradient ranked refresh every N steps
+gradientRefreshPeriod = 1
+# update top X percent of states under gradient ranking
+gradientUpdateRatio = 0.33
 # run a global sweep every X steps.
-globalSweepPeriod = 1
+globalRefeshPeriod = 9999
 
 # Initialize Environment
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -45,19 +53,28 @@ demo.renderFrame()
 print('Test initalized\n')
 # pre-compute
 if dijkstraSeed == True:
+    # run dijkstra
     dijkstraStart = time.time()
     demo.DijkstraValueSeed()
+    demo.policyIterationStep()
     dijkstraStop = time.time()
     print('Dijkstra Run Time: ', dijkstraStop - dijkstraStart)
+    
+if gradientSeed == True:
+    gradientStartTime = time.time()
+    demo.gradientRank(gradientUpdateRatio)
+    gradientStopTime = time.time()
+    print('Gradient run time: ', gradientStopTime - gradientStartTime)
+    demo.policyIterationStep()
 
-
-demo.updateList = demo.normalSet
-demo.policyIterationStep()
-demo.renderFrame()
-mfptStart = time.time()
-mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
-mfptStop = time.time()
-print('MFPT Run Time: ', mfptStop - mfptStart)
+if mfptSeed == True:
+    demo.updateList = demo.normalSet
+    demo.policyIterationStep()
+    demo.renderFrame()
+    mfptStart = time.time()
+    mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
+    mfptStop = time.time()
+    print('MFPT Run Time: ', mfptStop - mfptStart)
 
 # ???read shoubik first!!! demo.policyUpdate() instead of hybrid step
 
@@ -75,20 +92,21 @@ while unconverged:
     # Clock in
     startTime = time.time()
     
-    # mfpt usage
-    if demo.solverIterations % mfptRefreshPeriod == 0:
+    # partial update usage
+    if demo.solverIterations % globalRefeshPeriod == 0:
+        demo.updateList = demo.problemSet
+        # Convergence can only be accurately tested for after a global update.
+    elif demo.solverIterations % gradientRefreshPeriod:
+        demo.updateList = demo.gradientRank(gradientUpdateRatio)
+    elif demo.solverIterations % mfptRefreshPeriod == 0:
         print('MFPT RE-RANK: INIT')
-        mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
+        demo.updateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
         print('MFPT RE-RANK: COMPLETE')
 
-    if demo.solverIterations % globalSweepPeriod == 0:
-        demo.updateList = demo.problemSet
-        demo.hybridIterationStep()
-        # Convergence can only be tested for after a global update.
-        unconverged = demo.maxDifference > demo.convergenceThresholdEstimate
-    else:
-        demo.updateList = mfptUpdateList
-        demo.hybridIterationStep()
+    # Give our ranked problem set, update
+    demo.hybridIterationStep()
+    unconverged = demo.maxDifference > demo.convergenceThresholdEstimate
+
     
     # Clock out
     endTime = time.time()
