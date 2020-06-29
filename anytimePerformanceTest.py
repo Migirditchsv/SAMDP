@@ -7,31 +7,40 @@ Created on Mon Apr 20 13:27:14 2020
 """
 import time # testing and comparison
 import samdp
+import matplotlib.pyplot as plt # convergence rate tests
 #import os  # play gif at end
 
-# Controls
+#### Controls ####
 # side length of square state space
 environmentSize = 20
+
+## Dijkstra Controls
 # pre-seed value function based on dijkstra distance?
 dijkstraSeed =  True
+
+## mfpt Controls
 # seed values by mfpt?
 mfptSeed = False
 # run mfpt analysis every X steps. It is expensive.
-mfptRefreshPeriod = 999999
+mfptRefreshPeriod = 6
 # top X percent of mfpt scores to put in update list.
 mfptUpdateRatio = 0.3
 # Number of random starting states to compute each mfpt score from.
 mfptRolloutNumber = 30
+
+## Gradient Smoothing Controls
 # seed starting values with a gradient minimizaiton?
 gradientSeed = True
 # Run value gradient ranked refresh every N steps
 gradientRefreshPeriod = 1
 # update top X percent of states under gradient ranking
 gradientUpdateRatio = 0.33
-# run a global sweep every X steps.
-globalRefeshPeriod = 9999
 
-# Initialize Environment
+## Global updates
+# run a global sweep every X steps.
+globalRefeshPeriod = 1
+
+#### Initializeation ####
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
 
 # When defining action primatives, the iteration schemes break ties between
@@ -47,8 +56,53 @@ actionPrimatives = directional8
 transitionModel = samdp.transitionModelGenerator(
     stateSpace, actionPrimatives, 0.2)
 
+
+# #### Compute optimal value / policy
+# optimal = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
+# # setup
+# optimalTimeStamps = []
+# optimalAverageSteps = []
+# optimalAverageCost = []
+# optimal.updateList = optimal.normalSet
+# optimalComputeTime = 0.0
+# while optimal.maxDifference > optimal.convergenceThresholdEstimate:
+    
+#     print('test.py: optimal precompute step num:', optimal.solverIterations)
+#     optimalStartTime = time.time()
+#     optimal.hybridIterationStep()
+#     optimalEndTime = time.time()
+#     optimalComputeTime += optimalEndTime - optimalStartTime
+#     score = optimal.averageCost()
+#     # log scores
+#     optimalTimeStamps.append( optimalComputeTime )
+#     optimalAverageSteps.append( score[0] )
+#     optimalAverageCost.append( score[1] )
+    
+    
+# print("Optimal exhaustive benchmark complete \n")
+# lines = plt.plot(optimalTimeStamps, optimalAverageSteps,
+#                  optimalTimeStamps, optimalAverageCost)
+# plt.setp(lines[0])
+# plt.setp(lines[1])
+# plt.title("Traditional Hybrid Policy Value Iteration Convergence")
+# plt.legend(('Average Steps To Goal', 'Average Cost to  Goal'),loc='upper right')
+# plt.show()
+# plt.draw()
+
+    
+# optimal.policy/valueFunction can now be refferenced.
+    
+
+
+
+#### Test algorithm performance
 demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
 demo.renderFrame()
+
+# Data holders
+demoTimeStamps = []
+demoAverageSteps = []
+demoAverageCost = []
 
 print('Test initalized\n')
 # pre-compute
@@ -106,13 +160,19 @@ while unconverged:
     # Give our ranked problem set, update
     demo.hybridIterationStep()
     unconverged = demo.maxDifference > demo.convergenceThresholdEstimate
+
     
-    # Clock out
+    # Clock out and store results
     endTime = time.time()
     deltaTime = endTime - startTime
     print('test.py: deltaTime: ',deltaTime)
     totalTime += deltaTime
-
+    results = demo.averageCost()
+    steps = results[0]
+    cost = results[1]
+    demoTimeStamps.append(totalTime)
+    demoAverageSteps.append(steps)
+    demoAverageCost.append(cost)
 
     # Save conditions
     stepNum = demo.solverIterations
@@ -137,10 +197,21 @@ while unconverged:
 print('COMPLETE')
 print('run time: ',  totalTime,'\n')
 
+#### Report Results ####
+#os.system('xdg-open out.mp4')
+# repost as plots
+lines = plt.plot(demoTimeStamps, demoAverageSteps,
+                 demoTimeStamps, demoAverageCost)
+plt.setp(lines[0])
+plt.setp(lines[1])
+plt.title("Traditional Hybrid Policy Value Iteration Convergence")
+plt.legend(('Average Steps To Goal', 'Average Cost to  Goal'),loc='upper right')
+plt.show()
+plt.draw()
+
 # final frame buffer flush
 demo.writeOutFrameBuffer()
 # stitch to gif
 # demo.renderGIF()
 
-# Report Results
-#os.system('xdg-open out.mp4')
+

@@ -393,8 +393,46 @@ class SAMDP:
             passageTimes.pop(key)
         
         return mfptRankedUpdates
+    
+#### Benchmark Functions
+    def averageCost(self):
+        avgCost = 0.0
+        avgSteps = 0
+        for initialState in self._stateIterator:
+            state = initialState
+            cost = 0.0
+            steps = 0
+            while (state not in self.goalSet and steps < self.worldSize):
+                cost += self.rewards[state]
+                steps += 1
+                
+                # Probabylistically transition
+                action = self.policy[state]
+                admissableStates = self._admissableMoves(state)
+                transitionProbs = self._transitionProbability(action,
+                                                              state,
+                                                              admissableStates)
+                rng = random.uniform(0,1)
+                stateCount = len(transitionProbs)
+                for index in range(stateCount):
+                    if index == stateCount-1:
+                        state = admissableStates[index]
+                        break
+                    condition = (transitionProbs[index] < rng)
+                    condition *= (transitionProbs[index+1] > rng)
+                    if condition:
+                        state = admissableStates[index]
+                        break
+            avgCost += cost
+            avgSteps += steps
+            
+        # normaliz
+        avgCost /= self.worldSize
+        avgSteps /= self.worldSize
+        return [avgSteps, avgCost]
+            
 
-# Driver functions
+# Setup functions
 
 # stateSpace
 
