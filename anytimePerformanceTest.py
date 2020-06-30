@@ -16,12 +16,14 @@ environmentSize = 20
 
 ## Dijkstra Controls
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed =  True
+dijkstraSeed =  False
 
 ## mfpt Controls
 # seed values by mfpt?
 mfptSeed = False
-# run mfpt analysis every X steps. It is expensive.
+# Update states by mfpt ranking every N steps
+mfptUpdatePeriod = 9999
+# refresh mfpt ranking every N steps. It is expensive.
 mfptRefreshPeriod = 6
 # top X percent of mfpt scores to put in update list.
 mfptUpdateRatio = 0.3
@@ -30,15 +32,17 @@ mfptRolloutNumber = 30
 
 ## Gradient Smoothing Controls
 # seed starting values with a gradient minimizaiton?
-gradientSeed = True
-# Run value gradient ranked refresh every N steps
+gradientSeed = False
+# Update states by gradient rank every N steps
+gradientUpdatePeriod = 999
+# refresh value gradient rank every N steps
 gradientRefreshPeriod = 1
 # update top X percent of states under gradient ranking
-gradientUpdateRatio = 0.33
+gradientUpdateRatio = 0.2
 
 ## Global updates
 # run a global sweep every X steps.
-globalRefeshPeriod = 1
+globalUpdatePeriod = 999999
 
 #### Initializeation ####
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -116,10 +120,11 @@ if dijkstraSeed == True:
     
 if gradientSeed == True:
     gradientStartTime = time.time()
-    demo.gradientRank(gradientUpdateRatio)
+    demo.gradientRank(gradientUpdateRatio, displayGradient=True)
     gradientStopTime = time.time()
     print('Gradient run time: ', gradientStopTime - gradientStartTime)
     demo.policyIterationStep()
+gradientUpdateList = []
 
 if mfptSeed == True:
     demo.updateList = demo.normalSet
@@ -129,6 +134,7 @@ if mfptSeed == True:
     mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
     mfptStop = time.time()
     print('MFPT Run Time: ', mfptStop - mfptStart)
+mfptUpdateList = []
 
 # ???read shoubik first!!! demo.policyUpdate() instead of hybrid step
 
@@ -138,24 +144,32 @@ print('pre-processing complete\n')
 totalTime = 0.0
 unconverged = 1
 while unconverged:
-   
-    # update
-    print('test.py: step num:', demo.solverIterations)
-    print('test.py: delta value: ', demo.maxDifference, '/',demo.convergenceThresholdEstimate)
 
     # Clock in
+    print('test.py: step num:', demo.solverIterations)
+    print('test.py: delta value: ', demo.maxDifference, '/',demo.convergenceThresholdEstimate)
+    solverIterations = demo.solverIterations
     startTime = time.time()
     
     # partial update usage
-    if demo.solverIterations % globalRefeshPeriod == 0:
+    if solverIterations % gradientUpdatePeriod == 0:
+        condition = len(gradientUpdateList) == 0
+        condition += solverIterations%gradientRefreshPeriod == 0
+        if condition:
+            gradientUpdateList = demo.gradientRank(gradientUpdateRatio,
+                                            displayGradient=True)
+        demo.updateList = gradientUpdateList
+        print('Gradient Update Queued')
+    elif solverIterations % mfptUpdatePeriod == 0:
+        condition = len(mfptUpdateList)==0
+        condition += solverIterations%mfptRefreshPeriod == 0
+        if condition:
+            mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
+        demo.updateList = mfptUpdateList
+        print('MFPT Update Queued')
+    else:
         demo.updateList = demo.problemSet
-        # Convergence can only be accurately tested for after a global update.
-    elif demo.solverIterations % gradientRefreshPeriod:
-        demo.updateList = demo.gradientRank(gradientUpdateRatio)
-    elif demo.solverIterations % mfptRefreshPeriod == 0:
-        print('MFPT RE-RANK: INIT')
-        demo.updateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
-        print('MFPT RE-RANK: COMPLETE')
+        print('Global Update Queued')
 
     # Give our ranked problem set, update
     demo.hybridIterationStep()
@@ -175,14 +189,14 @@ while unconverged:
     demoAverageCost.append(cost)
 
     # Save conditions
-    stepNum = demo.solverIterations
+    stepNum = solverIterations
     print('RENDER FRAME CHECK: INIT')
     if stepNum < 20:
-        demo.renderFrame()
+        demo.renderFrame(renderValueGradient=True)
     elif stepNum > 20 and stepNum % 3 == 0:
-        demo.renderFrame()
+        demo.renderFrame(renderValueGradient=True)
     elif stepNum < 30 and stepNum % 1 == 0:
-        demo.renderFrame()
+        demo.renderFrame(renderValueGradient=True)
     print('RENDER FRAME CHECK: COMPLETE')
 
     if demo.frameBuffer % 60 == 0:

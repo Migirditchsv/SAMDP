@@ -207,7 +207,7 @@ class SAMDP:
         prob = [i * norm for i in prob]
         return(prob)
 
-    def renderFrame(self):
+    def renderFrame(self, renderValueGradient= False):
         # renders the current policy and value functions into a single frame
         # stored in self._frames[]
         # plot it
@@ -225,10 +225,8 @@ class SAMDP:
         V = [-self.policy[state][0] for state in self._stateIterator]
         axPolicy.quiver(X, Y, U, V, scale=25)
         axPolicy.set_ylim(axPolicy.get_ylim()[::-1])
-        sns.heatmap(self.valueFunction,
-                    # vmin=minValue, vmax=maxValue,
-                    annot=True, cbar=False, fmt="0.2f", linewidths=.01,
-                    ax=axValue, annot_kws={"size": 20})
+        sns.heatmap(self.valueFunction, annot=True, cbar=False, fmt="0.2f",
+                    linewidths=.01, ax=axValue, annot_kws={"size": 20})
 
         # title
         string = ['Frame Number:', str(self.solverIterations)]
@@ -238,6 +236,9 @@ class SAMDP:
         self._frames.append(fig)  # ([axPolicy, axValue,])
         plt.close(fig)
         self.frameBuffer += 1
+        
+        if renderValueGradient == True:
+            self.renderValueGradient()
 
     def writeOutFrameBuffer(self):
         # the buffer of frames for making movies consumes ram, slowing
@@ -313,7 +314,7 @@ class SAMDP:
 
         return
     
-    def gradientRank(self, selectionRatio):
+    def gradientRank(self, selectionRatio, displayGradient = False):
         #check gradient for all states. Really is comparing max slope in value
         #minus that direction's reward for non-obstacle neighbors
         
@@ -323,18 +324,21 @@ class SAMDP:
         
         # map states to max derivatives in a dic
         valueGradients = { state:0.0 for state in self.normalSet }
-        for state in self.problemSet:
+        for state in self._stateIterator:
             
             # Init values for state
+            stateReward = self.rewards[state]
             stateValue = self.valueFunction[state]
             maxValueGradient = 0
             #find state neighbors
             neighborSet = self._admissableMoves(state)
             for neighbor in neighborSet:
-                reward = self.rewards[neighbor]
-            #compute value derivative for neighbor
+                neighborReward = self.rewards[neighbor]
+            #compute reward and value derivative for neighbor
                 neighborValue = self.valueFunction[neighbor]
-                derivative = abs(neighborValue - stateValue - reward)
+                deltaValue = neighborValue - stateValue
+                deltaReward = neighborReward - stateReward
+                derivative = abs(deltaValue - deltaReward)
                 if derivative > maxValueGradient:
                     maxValueGradient = derivative
             # store top gradient in dic
@@ -346,7 +350,55 @@ class SAMDP:
             gradientRank.append(state)
             valueGradients.pop(state)
         
-        self.updateList = gradientRank.copy()
+        return gradientRank.copy()
+    
+    def renderValueGradient(self):
+        
+        # map states to max derivatives in a dic
+        valueGradients = { state:0.0 for state in self.normalSet }
+        for state in self._stateIterator:
+            
+            # Init values for state
+            stateReward = self.rewards[state]
+            stateValue = self.valueFunction[state]
+            maxValueGradient = 0
+            #find state neighbors
+            neighborSet = self._admissableMoves(state)
+            for neighbor in neighborSet:
+                neighborReward = self.rewards[neighbor]
+            #compute reward and value derivative for neighbor
+                neighborValue = self.valueFunction[neighbor]
+                deltaValue = neighborValue - stateValue
+                deltaReward = neighborReward - stateReward
+                derivative = abs(deltaValue - deltaReward)
+                if derivative > maxValueGradient:
+                    maxValueGradient = derivative
+            # store top gradient in dic
+            valueGradients[state] = maxValueGradient
+            
+        # Display gradient
+        gradientField = np.empty_like(self.valueFunction)
+        #fillin
+        for item in valueGradients.items():
+            #item[0] is key, item[1] is value
+            state = item[0]
+            localGradient = item[1]
+            gradientField[state] = localGradient
+        # Display
+        figure, ax = plt.subplots(1,1, figsize=(20,20))
+        sns.heatmap(gradientField, annot=True, cbar=False, fmt="0.2f",
+                linewidths=.01, ax=ax, annot_kws={"size": 8})
+        titleString = ' '.join(['Value Gradient at Iteration',
+                              str(self.solverIterations)])
+        plt.suptitle(titleString, fontsize=15)
+        plt.draw()
+        plt.show()
+        frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
+        fileName = 'gradient'+frameLabel+'.png'
+        filePath = self.folderPath+'/'+fileName
+        print('saving: ', filePath)
+        figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
+        plt.close()
         
             
         
