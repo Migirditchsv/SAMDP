@@ -387,21 +387,16 @@ class SAMDP:
         # Display
         figure, ax = plt.subplots(1,1, figsize=(20,20))
         sns.heatmap(gradientField, annot=True, cbar=False, fmt="0.2f",
-                linewidths=.01, ax=ax, annot_kws={"size": 8})
+                linewidths=.01, ax=ax, annot_kws={"size": 14})
         titleString = ' '.join(['Value Gradient at Iteration',
                               str(self.solverIterations)])
-        plt.suptitle(titleString, fontsize=15)
-        plt.draw()
-        plt.show()
+        plt.suptitle(titleString, fontsize=35)
         frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
         fileName = 'gradient'+frameLabel+'.png'
         filePath = self.folderPath+'/'+fileName
         print('saving: ', filePath)
         figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
         plt.close()
-        
-            
-        
 
     def mfptRank(self, selectionRatio, trials):
         stepCutoff = len(self._stateIterator)
@@ -455,30 +450,29 @@ class SAMDP:
             cost = 0.0
             steps = 0
             while (state not in self.goalSet and steps < self.worldSize):
-                cost += self.rewards[state]
-                steps += 1
                 
                 # Probabylistically transition
                 action = self.policy[state]
                 admissableStates = self._admissableMoves(state)
                 transitionProbs = self._transitionProbability(action,
                                                               state,
-                                                              admissableStates)
-                rng = random.uniform(0,1)
-                stateCount = len(transitionProbs)
-                for index in range(stateCount):
-                    if index == stateCount-1:
-                        state = admissableStates[index]
-                        break
-                    condition = (transitionProbs[index] < rng)
-                    condition *= (transitionProbs[index+1] > rng)
-                    if condition:
-                        state = admissableStates[index]
-                        break
+                                                              admissableStates) 
+                # Uncomment for random transitions
+                #state = random.choices(admissableStates,transitionProbs, k=1)
+                #state = state[0]
+
+                # Uncomment for deterministic transitions
+                state = tuple( [ sum(x) for x in zip(state, action) ] )
+                if state not in admissableStates:
+                    state = admissableStates[0]
+                # tally costs               
+                cost += self.rewards[state]
+                steps += 1
+                
             avgCost += cost
             avgSteps += steps
             
-        # normaliz
+        # normalize
         avgCost /= self.worldSize
         avgSteps /= self.worldSize
         return [avgSteps, avgCost]
