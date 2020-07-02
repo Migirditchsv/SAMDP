@@ -16,29 +16,33 @@ environmentSize = 10
 
 # Dijkstra Controls
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed = True
+dijkstraSeed = False
 
 # mfpt Controls
 # seed values by mfpt?
 mfptSeed = False
-# run mfpt analysis every X steps. It is expensive.
-mfptRefreshPeriod = 6
+# run an mfpt ranked update every N iterations
+mfptUpdatePeriod = 5
+# run mfpt analysis every X mpft updates. It is expensive.
+mfptRefreshPeriod = 2
 # top X percent of mfpt scores to put in update list.
 mfptUpdateRatio = 0.3
 # Number of random starting states to compute each mfpt score from.
-mfptRolloutNumber = 30
+mfptRolloutNumber = 0.3 * environmentSize
 
 # Gradient Smoothing Controls
 # seed starting values with a gradient minimizaiton?
-gradientSeed = True
+gradientSeed = False
+# Run a gradient ranked update every N steps
+gradientUpdatePeriod = 3
 # Run value gradient ranked refresh every N steps
 gradientRefreshPeriod = 1
 # update top X percent of states under gradient ranking
-gradientUpdateRatio = 0.33
+gradientUpdateRatio = 0.2
 
 # Global updates
-# run a global sweep every X steps.
-globalRefeshPeriod = 1
+# run a global sweep every X steps. Overrides other concerent update types
+globalUpdatePeriod = 9999999
 
 #### Initializeation ####
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -144,36 +148,49 @@ while unconverged:
 
     # Clock in
     startTime = time.time()
+    iteration = demo.solverIterations
 
     # partial update usage
-    if demo.solverIterations % globalRefeshPeriod == 0:
+    if iteration % globalUpdatePeriod == 0:
         demo.updateList = demo.problemSet
-        # Convergence can only be accurately tested for after a global update.
-    elif demo.solverIterations % gradientRefreshPeriod:
-        demo.updateList = demo.gradientRank(gradientUpdateRatio)
-    elif demo.solverIterations % mfptRefreshPeriod == 0:
-        print('MFPT RE-RANK: INIT')
-        demo.updateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
-        print('MFPT RE-RANK: COMPLETE')
+        print('Global Update Queued')
+    elif iteration % gradientUpdatePeriod:
+        if (iteration // gradientUpdatePeriod) % gradientRefreshPeriod == 0:
+            gradientUpdateList = demo.gradientRank(gradientUpdateRatio)
+        demo.updateList = gradientUpdateList
+        print('Gradient Update Queued')
+    elif iteration % mfptUpdatePeriod:
+        if (iteration // mfptUpdatePeriod) % mfptRefreshPeriod == 0:
+            mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
+        demo.updateList = mfptUpdateList
+        print('MFPT Update Queued')
+    else:#default to global update
+        demo.updateList = demo.problemSet
+        print('Global Update Queued')
+
 
     # Give our ranked problem set, update
     demo.hybridIterationStep()
     unconverged = demo.maxDifference > demo.convergenceThresholdEstimate
 
     # Clock out and store results
+    # time out
     endTime = time.time()
     deltaTime = endTime - startTime
     print('test.py: deltaTime: ', deltaTime)
     totalTime += deltaTime
+    # performance eval
     results = demo.averageCost()
     steps = results[0]
     cost = results[1]
     demoTimeStamps.append(totalTime)
     demoAverageSteps.append(steps)
     demoAverageCost.append(cost)
+    # render gradient
+    demo.renderValueGradient()
 
     # Save conditions
-    stepNum = demo.solverIterations
+    stepNum = iteration
     print('RENDER FRAME CHECK: INIT')
     if stepNum < 20:
         demo.renderFrame()
