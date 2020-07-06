@@ -90,13 +90,13 @@ class SAMDP:
         self.normalSet = {state for state in self._stateIterator
                           if state not in self.obstacleSet.union(self.goalSet)}
         self.problemSet = {state for state in self._stateIterator
-                              if state not in self.goalSet}
+                           if state not in self.goalSet}
         self.policy = {state: self.actionPrimatives[0]
                        for state in self._stateIterator}
         self.maxDifference = 9999999999999
         # estimate of convergence condition
         self.convergenceThresholdEstimate = (
-            (self.goalValue - self.obstacleValue) / self.worldSize)**3
+            2.0 * abs(self.goalValue - self.obstacleValue) / self.worldSize)**2
 
         # Internal data objects
         self._frames = []  # list of plots to save
@@ -118,7 +118,6 @@ class SAMDP:
     def hybridIterationStep(self):
         # A sumultainous update to value and then policy optimimzation
         for state in self.updateList:  # self._stateIterator:
-
 
             # Skip goal states
             if state in self.goalSet:
@@ -207,7 +206,7 @@ class SAMDP:
         prob = [i * norm for i in prob]
         return(prob)
 
-    def renderFrame(self, renderValueGradient= False):
+    def renderFrame(self, renderValueGradient=False):
         # renders the current policy and value functions into a single frame
         # stored in self._frames[]
         # plot it
@@ -236,7 +235,7 @@ class SAMDP:
         self._frames.append(fig)  # ([axPolicy, axValue,])
         plt.close(fig)
         self.frameBuffer += 1
-        
+
         if renderValueGradient == True:
             self.renderValueGradient()
 
@@ -269,7 +268,7 @@ class SAMDP:
     def DijkstraValueSeed(self):
         # Runs the dijkstra alg from the first goal state,
         # moving along action primatives.
-        
+
         # unvisited states
         unvisited = self.normalSet.copy()
         # start from goal states
@@ -284,10 +283,10 @@ class SAMDP:
                 dijkstraValue[state] = self.goalValue
             else:
                 dijkstraValue[state] = self.obstacleValue
-        
+
         # Loop while unvisited not empty
         while len(unvisited) > 0:
-            
+
             # add to fringe from successor of current states
             for state in currentStates:
                 # Add successors of state to fringe
@@ -306,35 +305,34 @@ class SAMDP:
                         fringe.add(newState)
             currentStates = fringe.copy()
             fringe.clear()
-        
+
         # Push dijkstra values into value function
         self.valueFunction = dijkstraValue.copy()
         self.holdValueFunction = dijkstraValue.copy()
-        
 
         return
-    
-    def gradientRank(self, selectionRatio, displayGradient = False):
-        #check gradient for all states. Really is comparing max slope in value
-        #minus that direction's reward for non-obstacle neighbors
-        
+
+    def gradientRank(self, selectionRatio, displayGradient=False):
+        # check gradient for all states. Really is comparing max slope in value
+        # minus that direction's reward for non-obstacle neighbors
+
         # set rank size
-        selectionSize = m.floor( len(self._stateIterator) * selectionRatio )
+        selectionSize = m.floor(len(self._stateIterator) * selectionRatio)
         gradientRank = []
-        
+
         # map states to max derivatives in a dic
-        valueGradients = { state:0.0 for state in self.normalSet }
+        valueGradients = {state: 0.0 for state in self.normalSet}
         for state in self._stateIterator:
-            
+
             # Init values for state
             stateReward = self.rewards[state]
             stateValue = self.valueFunction[state]
             maxValueGradient = 0
-            #find state neighbors
+            # find state neighbors
             neighborSet = self._admissableMoves(state)
             for neighbor in neighborSet:
                 neighborReward = self.rewards[neighbor]
-            #compute reward and value derivative for neighbor
+            # compute reward and value derivative for neighbor
                 neighborValue = self.valueFunction[neighbor]
                 deltaValue = neighborValue - stateValue
                 deltaReward = neighborReward - stateReward
@@ -343,30 +341,30 @@ class SAMDP:
                     maxValueGradient = derivative
             # store top gradient in dic
             valueGradients[state] = maxValueGradient
-            
+
         # Rank
         for index in range(selectionSize):
-            state = max(valueGradients, key = valueGradients.get )
+            state = max(valueGradients, key=valueGradients.get)
             gradientRank.append(state)
             valueGradients.pop(state)
-        
+
         return gradientRank.copy()
-    
+
     def renderValueGradient(self):
-        
+
         # map states to max derivatives in a dic
-        valueGradients = { state:0.0 for state in self.normalSet }
+        valueGradients = {state: 0.0 for state in self.normalSet}
         for state in self._stateIterator:
-            
+
             # Init values for state
             stateReward = self.rewards[state]
             stateValue = self.valueFunction[state]
             maxValueGradient = 0
-            #find state neighbors
+            # find state neighbors
             neighborSet = self._admissableMoves(state)
             for neighbor in neighborSet:
                 neighborReward = self.rewards[neighbor]
-            #compute reward and value derivative for neighbor
+            # compute reward and value derivative for neighbor
                 neighborValue = self.valueFunction[neighbor]
                 deltaValue = neighborValue - stateValue
                 deltaReward = neighborReward - stateReward
@@ -375,21 +373,21 @@ class SAMDP:
                     maxValueGradient = derivative
             # store top gradient in dic
             valueGradients[state] = maxValueGradient
-            
+
         # Display gradient
         gradientField = np.empty_like(self.valueFunction)
-        #fillin
+        # fillin
         for item in valueGradients.items():
             #item[0] is key, item[1] is value
             state = item[0]
             localGradient = item[1]
             gradientField[state] = localGradient
         # Display
-        figure, ax = plt.subplots(1,1, figsize=(20,20))
+        figure, ax = plt.subplots(1, 1, figsize=(20, 20))
         sns.heatmap(gradientField, annot=True, cbar=False, fmt="0.2f",
-                linewidths=.01, ax=ax, annot_kws={"size": 14})
+                    linewidths=.01, ax=ax, annot_kws={"size": 14})
         titleString = ' '.join(['Value Gradient at Iteration',
-                              str(self.solverIterations)])
+                                str(self.solverIterations)])
         plt.suptitle(titleString, fontsize=35)
         frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
         fileName = 'gradient'+frameLabel+'.png'
@@ -401,28 +399,31 @@ class SAMDP:
     def mfptRank(self, selectionRatio, trials):
         stepCutoff = len(self._stateIterator)
         updateNumber = m.floor(stepCutoff * selectionRatio)
-        passageTimes = {state:[] for state in self._stateIterator}
+        passageTimes = {state: [] for state in self._stateIterator}
         mfptRankedUpdates = [None] * updateNumber
         # compute MFPT for every state
-        
+
         rolloutStateIndicies = random.sample(self._stateIterator, k=trials)
-     
-        for startIndex in rolloutStateIndicies: 
-             time = 0
-             state = startIndex
-             while time < stepCutoff:
-                 time += 1
-                 action = self.policy[state]
-                 state = tuple( [sum(x) for x in zip(state,action) ] )
-                 
-                 # if out of bounds, go to next starting state
-                 if state in self.goalSet:
-                     break
-                 elif state in self._stateIterator: 
-                     passageTimes[state].append(time)
-                 else:
-                     break
-        
+
+        for startIndex in rolloutStateIndicies:
+            time = 0
+            state = startIndex
+            while time < stepCutoff:
+                time += 1
+                action = self.policy[state]
+                admissableMoves = self._admissableMoves(state)
+                state = tuple([sum(x) for x in zip(state, action)])
+                if state not in admissableMoves:
+                    state = admissableMoves[0]
+
+                # if out of bounds, go to next starting state
+                if state in self.goalSet:
+                    break
+                elif state in self._stateIterator:
+                    passageTimes[state].append(time)
+                else:
+                    break
+
         # compute mfpts
         for state in self._stateIterator:
             hits = passageTimes[state]
@@ -431,17 +432,17 @@ class SAMDP:
                 passageTimes[state] = stepCutoff
             else:
                 passageTimes[state] = sum(hits) / hitNum
-        
+
         # select top updateNumber states
         for count in range(updateNumber):
-            key = min(passageTimes, key = passageTimes.get)
+            key = min(passageTimes, key=passageTimes.get)
             mfptRankedUpdates[count] = key
             # disqualify key from future updates
             passageTimes.pop(key)
-        
+
         return mfptRankedUpdates
-    
-#### Benchmark Functions
+
+# Benchmark Functions
     def averageCost(self):
         avgCost = 0.0
         avgSteps = 0
@@ -450,33 +451,33 @@ class SAMDP:
             cost = 0.0
             steps = 0
             while (state not in self.goalSet and steps < self.worldSize):
-                
+
                 # Probabylistically transition
                 action = self.policy[state]
                 admissableStates = self._admissableMoves(state)
                 transitionProbs = self._transitionProbability(action,
                                                               state,
-                                                              admissableStates) 
+                                                              admissableStates)
                 # Uncomment for random transitions
                 #state = random.choices(admissableStates,transitionProbs, k=1)
                 #state = state[0]
 
                 # Uncomment for deterministic transitions
-                state = tuple( [ sum(x) for x in zip(state, action) ] )
+                state = tuple([sum(x) for x in zip(state, action)])
                 if state not in admissableStates:
                     state = admissableStates[0]
-                # tally costs               
+                # tally costs
                 cost += self.rewards[state]
                 steps += 1
-                
+
             avgCost += cost
             avgSteps += steps
-            
+
         # normalize
         avgCost /= self.worldSize
         avgSteps /= self.worldSize
         return [avgSteps, avgCost]
-            
+
 
 # Setup functions
 
@@ -495,13 +496,13 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
 
     # parameters
     goalValue = 1.0
-    obstacleValue = -1.0 #-0.5 * (goalValue / worldSize**2)
+    obstacleValue = -1.0  # -0.5 * (goalValue / worldSize**2)
     passiveValue = obstacleValue / worldSize
     center = m.floor(worldSize/2.0)
     quarter = m.floor(center / 2.0)
 
     # Init
-    goalSet = {(0, worldSize-1), (1,worldSize-1)}
+    goalSet = {(0, worldSize-1), (1, worldSize-1)}
     obstacleSet = set()
 
     # flat list of states, useful for comprehensions
@@ -538,7 +539,7 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
         feature2 = (state[1] > center and
                     state[1] != center + quarter and
                     state[0] == center)
-        
+
         if state in obstacleSet:
             stateSpace[state] = obstacleValue
         elif state in goalSet:

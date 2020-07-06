@@ -7,42 +7,45 @@ Created on Mon Apr 20 13:27:14 2020
 """
 import time  # testing and comparison
 import samdp
+import math as m  # floor
 import matplotlib.pyplot as plt  # convergence rate tests
 # import os  # play gif at end
 
 #### Controls ####
 # side length of square state space
-environmentSize = 10
+environmentSize = 20
+# title of data for this run
+convergencePlotTitle = 'MFPT Updates with Value Gradient Smoothed Seeding'
 
 # Dijkstra Controls
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed = False
+dijkstraSeed =  True
 
 # mfpt Controls
 # seed values by mfpt?
 mfptSeed = False
 # run an mfpt ranked update every N iterations
-mfptUpdatePeriod = 5
+mfptUpdatePeriod = 1
 # run mfpt analysis every X mpft updates. It is expensive.
-mfptRefreshPeriod = 2
+mfptRefreshPeriod = 3
 # top X percent of mfpt scores to put in update list.
-mfptUpdateRatio = 0.3
+mfptUpdateRatio = 0.5
 # Number of random starting states to compute each mfpt score from.
-mfptRolloutNumber = 0.3 * environmentSize
+mfptRolloutNumber = m.floor(0.3 * environmentSize)
 
 # Gradient Smoothing Controls
 # seed starting values with a gradient minimizaiton?
-gradientSeed = False
+gradientSeed = True 
 # Run a gradient ranked update every N steps
-gradientUpdatePeriod = 3
+gradientUpdatePeriod = 9999
 # Run value gradient ranked refresh every N steps
 gradientRefreshPeriod = 1
 # update top X percent of states under gradient ranking
-gradientUpdateRatio = 0.2
+gradientUpdateRatio = 0.7
 
 # Global updates
 # run a global sweep every X steps. Overrides other concerent update types
-globalUpdatePeriod = 9999999
+globalUpdatePeriod = 9999
 
 #### Initializeation ####
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -50,10 +53,10 @@ stateSpace = samdp.stateSpaceGenerator(environmentSize)
 # When defining action primatives, the iteration schemes break ties between
 # expected utility of actions by the order they appear in the primatives list.
 # null actions (0,0), should therefore always be listed LAST
-directional8 = [(1, 0), (-1, 0), (0, 1), (0, -1),
-                (-1, -1), (1, 1), (-1, 1), (1, -1), (0, 0)]
+directional8 = [(0,0), (1, 0), (-1, 0), (0, 1), (0, -1),
+                (-1, -1), (1, 1), (-1, 1), (1, -1)]
 
-directional4 = [(1, 0), (-1, 0), (0, 1), (0, -1), (0, 0)]
+directional4 = [(0,0), (1, 0), (-1, 0), (0, 1), (0, -1)]
 
 actionPrimatives = directional8
 
@@ -97,14 +100,21 @@ transitionModel = samdp.transitionModelGenerator(
 # optimal.policy/valueFunction can now be refferenced.
 
 
-# Test algorithm performance
-demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
-demo.renderFrame()
-
 # Data holders
 demoTimeStamps = []
 demoAverageSteps = []
 demoAverageCost = []
+
+# Test algorithm performance
+demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
+demo.renderFrame()
+# pre-performance eval
+results = demo.averageCost()
+steps = results[0]
+cost = results[1]
+demoTimeStamps.append(0)
+demoAverageSteps.append(steps)
+demoAverageCost.append(cost)
 
 print('Test initalized\n')
 # pre-compute
@@ -164,10 +174,9 @@ while unconverged:
             mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
         demo.updateList = mfptUpdateList
         print('MFPT Update Queued')
-    else:#default to global update
+    else:  # default to global update
         demo.updateList = demo.problemSet
         print('Global Update Queued')
-
 
     # Give our ranked problem set, update
     demo.hybridIterationStep()
@@ -215,16 +224,19 @@ print('run time: ',  totalTime, '\n')
 #### Report Results ####
 #os.system('xdg-open out.mp4')
 # repost as plots
+# clean data
+demoTimeStamps.pop(1)
+demoAverageCost.pop(1)
+demoAverageSteps.pop(1)
 lines = plt.plot(demoTimeStamps, demoAverageSteps,
                  demoTimeStamps, demoAverageCost)
 plt.setp(lines[0])
 plt.setp(lines[1])
-plt.title("Traditional Hybrid Policy Value Iteration Convergence")
+plt.title(convergencePlotTitle)
 plt.legend(('Average Steps To Goal', 'Average Cost to  Goal'), loc='upper right')
-plt.show()
-plt.draw()
+plt.savefig('RenderingFrames/convergence.png')
 
 # final frame buffer flush
 demo.writeOutFrameBuffer()
 # stitch to gif
-# demo.renderGIF()
+demo.renderGIF()
