@@ -8,9 +8,12 @@ Created on Mon Apr 20 13:27:14 2020
 import samdp
 import os  # play gif at end
 
-epsilon = 0.001
 
-stateSpace = samdp.stateSpaceGenerator(20, 0.5)
+print('fastTest Begin')
+epsilon = 0.001
+worldSize = 12
+
+stateSpace = samdp.stateSpaceGenerator(worldSize, 0.5)
 
 actionPrimatives = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
                     (-1, -1), (1, 1), (-1, 1), (1, -1)]

@@ -5,6 +5,8 @@ Created on Mon Apr 20 11:27:27 2020
 
 @author: sam
 """
+from matplotlib.pyplot import figure
+from scipy.sparse.linalg import inv  # matrix inevrsion for MFPT
 import numpy as np
 import math as m  # floor for terrain generation
 import random  # random obstacle generation
@@ -34,8 +36,10 @@ class SAMDP:
     # goalValue = 1.0  # value of _stateSpace to look for in id'ing goal pts.
     # obstacleValue = -0.1  # value of inaccessible points
     # passiveValue = 0.0 # value of transitioning to a normal space
-    gamma = 0.9  # exponential discount factor
-    maxSteps = 1000  # Max allowable solver steps
+    gamma = 0.95  # exponential discount factor
+    maxSteps = 300  # Max allowable solver steps
+
+    # warmup
     # num of zeros to pad frame counter
     frameMagnitude = m.ceil(m.log(maxSteps) / m.log(10))
     folderPath = './RenderingFrames'  # where to dump pre-rendered frames. Not safe rn
@@ -44,7 +48,7 @@ class SAMDP:
                  _transitionModel, _epsilon=0.01):
 
         # Safety checks
-        # eventually upgrade to handle rectangular
+        # eventually upgrade to handle rectangular domain
         [self.rowSize, self.colSize] = _stateSpace.shape
         self.worldSize = self.rowSize * self.colSize
         if self.rowSize != self.colSize:
@@ -107,7 +111,7 @@ class SAMDP:
             # Lookahead
             qFunction = self._lookAhead(state)
 
-            # find max and argmax of q. Lists are w/o built in max :(
+            # find max and argmax of q.
             def f(i): return qFunction[i]
             argMax = max(range(len(qFunction)), key=f)
             actMax = self.actionPrimatives[argMax]
@@ -117,7 +121,7 @@ class SAMDP:
 
     def hybridIterationStep(self):
         # A sumultainous update to value and then policy optimimzation
-        for state in self.updateList:  # self._stateIterator:
+        for state in self.updateList:
 
             # Skip goal states
             if state in self.goalSet:
@@ -171,8 +175,7 @@ class SAMDP:
         return qFunction
 
     def _admissableMoves(self, currentState):
-        # Needs rewrite for speed and obstacles.
-        # Maybe use another dic { (r,c): [ ]}
+
         r = int(currentState[0])
         c = int(currentState[1])
         rows = [r]
@@ -192,6 +195,7 @@ class SAMDP:
             for newC in cols:
                 nextState = (newR, newC)
                 newStates.append(nextState)
+
         return(newStates.copy())
 
     def _transitionProbability(self, action, state, newStates):
@@ -206,33 +210,40 @@ class SAMDP:
         prob = [i * norm for i in prob]
         return(prob)
 
+    # Rendering methods
+
     def renderFrame(self, renderValueGradient=False):
         # renders the current policy and value functions into a single frame
-        # stored in self._frames[]
-        # plot it
-        fig, (axPolicy, axValue) = plt.subplots(nrows=1, ncols=2,
-                                                figsize=(50, 30))
-        # Bounds
-        # meanVal = np.nanmean(self.valueFunction)
-        # minValue = meanVal - ( 0.5 * abs(meanVal) )
-        # maxValue = meanVal + ( 0.5 * abs(meanVal) )
+        # stored in self._frames[].
 
-        # (row, col) coordinate form in world iterator
-        X = [state[1] for state in self._stateIterator]
-        Y = [state[0] for state in self._stateIterator]
+        # Settings
+        offset = 0.5  # To align vectors with heatmap plot
+
+        # Bounds
+        meanVal = np.nanmean(self.valueFunction)
+        minValue = meanVal - (0.5 * abs(meanVal))
+        maxValue = meanVal + (0.5 * abs(meanVal))
+
+        # Format Data
+        X = [state[1] + offset for state in self._stateIterator]
+        Y = [state[0] + offset for state in self._stateIterator]
         U = [self.policy[state][1] for state in self._stateIterator]
         V = [-self.policy[state][0] for state in self._stateIterator]
-        axPolicy.quiver(X, Y, U, V, scale=25)
-        axPolicy.set_ylim(axPolicy.get_ylim()[::-1])
+
+        # plot it
+        fig = figure()
+        plt.quiver(X, Y, U, V, scale=25, zorder=10, color='cyan')
+        # plt.set_ylim(plt.get_ylim())
         sns.heatmap(self.valueFunction, annot=True, cbar=False, fmt="0.2f",
-                    linewidths=.01, ax=axValue, annot_kws={"size": 20})
+                    linewidths=.01, annot_kws={"size": 7}, zorder=0)
 
         # title
-        string = ['Frame Number:', str(self.solverIterations)]
+        string = ['Solver Iteration:', str(self.solverIterations)]
         string = ' '.join(string)
-        plt.suptitle(string, fontsize=50)
-        # fig.canvas.draw()
-        self._frames.append(fig)  # ([axPolicy, axValue,])
+        plt.title(string, fontsize=15)
+
+        # housekeeping
+        self._frames.append(fig)
         plt.close(fig)
         self.frameBuffer += 1
 
@@ -264,6 +275,54 @@ class SAMDP:
         command = 'ffmpeg -framerate 2 -i '+self.folderPath+'/img%0' + \
             str(self.frameMagnitude)+'d.png -g 8 -c:v libx264 -r 2 out.mp4'
         os.system(command)
+
+    def renderValueGradient(self):
+
+        # map states to max derivatives in a dic
+        valueGradients = {state: 0.0 for state in self.normalSet}
+        for state in self._stateIterator:
+
+            # Init values for state
+            stateReward = self.rewards[state]
+            stateValue = self.valueFunction[state]
+            maxValueGradient = 0
+            # find state neighbors
+            neighborSet = self._admissableMoves(state)
+            for neighbor in neighborSet:
+                neighborReward = self.rewards[neighbor]
+            # compute reward and value derivative for neighbor
+                neighborValue = self.valueFunction[neighbor]
+                deltaValue = neighborValue - stateValue
+                deltaReward = neighborReward - stateReward
+                derivative = abs(deltaValue - deltaReward)
+                if derivative > maxValueGradient:
+                    maxValueGradient = derivative
+            # store top gradient in dic
+            valueGradients[state] = maxValueGradient
+
+        # Display gradient
+        gradientField = np.empty_like(self.valueFunction)
+        # fillin
+        for item in valueGradients.items():
+            #item[0] is key, item[1] is value
+            state = item[0]
+            localGradient = item[1]
+            gradientField[state] = localGradient
+        # Display
+        figure, ax = plt.subplots(1, 1, figsize=(20, 20))
+        sns.heatmap(gradientField, annot=True, cbar=False, fmt="0.2f",
+                    linewidths=.01, ax=ax, annot_kws={"size": 14})
+        titleString = ' '.join(['Value Gradient at Iteration',
+                                str(self.solverIterations)])
+        plt.suptitle(titleString, fontsize=35)
+        frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
+        fileName = 'gradient'+frameLabel+'.png'
+        filePath = self.folderPath+'/'+fileName
+        print('saving: ', filePath)
+        figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+    # Ranking algs
 
     def DijkstraValueSeed(self):
         # Runs the dijkstra alg from the first goal state,
@@ -350,54 +409,33 @@ class SAMDP:
 
         return gradientRank.copy()
 
-    def renderValueGradient(self):
+    def mfptRank(self, selectionRatio):
+        updateNumber = m.floor(selectionRatio * self.worldSize)
+        transProbMtx = np.zeros((self.worldSize, self.worldSize))
+        negIdentityVec = np.full((self.worldSize, 1), -1)
 
-        # map states to max derivatives in a dic
-        valueGradients = {state: 0.0 for state in self.normalSet}
-        for state in self._stateIterator:
+        # Populate transition probability matrix
+        for stateIndex in range(0, self.worldSize-1):
+            state = (stateIndex//self.colSize, stateIndex % self.rowSize)
+            action = self.policy[state]
+            neighbors = self._admissableMoves(state)
+            probs = self._transitionProbability(action, state, neighbors)
+            # convert neighbor states to state indicies and insert probs
+            # remember -1 on diagonal.
+            probIndex = 0
+            for neighbor in neighbors:
+                neighborIndex = neighbor[0] * \
+                    self.colSize + neighbor[1]
+                transProbMtx[stateIndex, neighborIndex] = probs[probIndex] - \
+                    (stateIndex == neighborIndex)
+                probIndex += 1
 
-            # Init values for state
-            stateReward = self.rewards[state]
-            stateValue = self.valueFunction[state]
-            maxValueGradient = 0
-            # find state neighbors
-            neighborSet = self._admissableMoves(state)
-            for neighbor in neighborSet:
-                neighborReward = self.rewards[neighbor]
-            # compute reward and value derivative for neighbor
-                neighborValue = self.valueFunction[neighbor]
-                deltaValue = neighborValue - stateValue
-                deltaReward = neighborReward - stateReward
-                derivative = abs(deltaValue - deltaReward)
-                if derivative > maxValueGradient:
-                    maxValueGradient = derivative
-            # store top gradient in dic
-            valueGradients[state] = maxValueGradient
+        # Do efficient sparse matrix inversion
+        invTransProb = inv(transProbMtx)
+        mfpts = invTransProb * negIdentityVec
+        x = 0
 
-        # Display gradient
-        gradientField = np.empty_like(self.valueFunction)
-        # fillin
-        for item in valueGradients.items():
-            #item[0] is key, item[1] is value
-            state = item[0]
-            localGradient = item[1]
-            gradientField[state] = localGradient
-        # Display
-        figure, ax = plt.subplots(1, 1, figsize=(20, 20))
-        sns.heatmap(gradientField, annot=True, cbar=False, fmt="0.2f",
-                    linewidths=.01, ax=ax, annot_kws={"size": 14})
-        titleString = ' '.join(['Value Gradient at Iteration',
-                                str(self.solverIterations)])
-        plt.suptitle(titleString, fontsize=35)
-        frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
-        fileName = 'gradient'+frameLabel+'.png'
-        filePath = self.folderPath+'/'+fileName
-        print('saving: ', filePath)
-        figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
-        plt.close()
-
-    def mfptRank(self, selectionRatio, trials):
-        stepCutoff = len(self._stateIterator)
+        """ stepCutoff = len(self._stateIterator)
         updateNumber = m.floor(stepCutoff * selectionRatio)
         passageTimes = {state: [] for state in self._stateIterator}
         mfptRankedUpdates = [None] * updateNumber
@@ -439,7 +477,7 @@ class SAMDP:
             mfptRankedUpdates[count] = key
             # disqualify key from future updates
             passageTimes.pop(key)
-
+ """
         return mfptRankedUpdates
 
 # Benchmark Functions
