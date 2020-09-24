@@ -7,6 +7,7 @@ Created on Mon Apr 20 11:27:27 2020
 """
 from matplotlib.pyplot import figure
 from scipy.sparse.linalg import inv  # matrix inevrsion for MFPT
+from scipy.sparse import csc_matrix  # matrix inevrsion for MFPT
 import numpy as np
 import math as m  # floor for terrain generation
 import random  # random obstacle generation
@@ -83,9 +84,11 @@ class SAMDP:
         self.obstacleValue = float(np.nanmin(self.valueFunction))
 
         # public vars
+        # Stores mfpt scores by state index
+        self.mfpt = np.array((self.worldSize, 1))
         self.frameBuffer = 0  # number of frames being stored in ram
         self.frameIndex = 1
-        self.solverIterations = 0
+        self.solverIterations = 1
         self.updateList = self._stateIterator  # change in loop for partial update
         self.goalSet = {state for state in self._stateIterator
                         if self.valueFunction[state] == self.goalValue}
@@ -322,6 +325,25 @@ class SAMDP:
         figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
         plt.close()
 
+    def renderMFPT(self):
+        mfptGrid = np.zeros((self.rowSize, self.colSize))
+        for state in self._stateIterator:
+            stateIndex = self.stateToIndex(state)
+            mfptGrid[state] = self.mfpt[stateIndex]
+        figure, ax = plt.subplots(1, 1, figsize=(20, 20))
+        sns.heatmap(mfptGrid, annot=True, cbar=True, fmt=".2g",
+                    linewidths=.01, ax=ax, annot_kws={"size": 14})
+        titleString = ' '.join(['MFPT Values at Iteration',
+                                str(self.solverIterations)])
+        ax.invert_yaxis()
+        plt.suptitle(titleString, fontsize=35)
+        frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
+        fileName = 'MFPT'+frameLabel+'.png'
+        filePath = self.folderPath+'/'+fileName
+        print('saving: ', filePath)
+        figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
+        plt.close()
+
     # Ranking algs
 
     def DijkstraValueSeed(self):
@@ -371,7 +393,7 @@ class SAMDP:
 
         return
 
-    def gradientRank(self, selectionRatio, displayGradient=False):
+    def gradientRank(self, selectionRatio):
         # check gradient for all states. Really is comparing max slope in value
         # minus that direction's reward for non-obstacle neighbors
 
@@ -409,14 +431,15 @@ class SAMDP:
 
         return gradientRank.copy()
 
-    def mfptRank(self, selectionRatio):
+    def mfptRank(self, selectionRatio, displayMFPT=False):
         updateNumber = m.floor(selectionRatio * self.worldSize)
+        # csc_matrix((self.worldSize, self.worldSize), dtype=float)
         transProbMtx = np.zeros((self.worldSize, self.worldSize))
         negIdentityVec = np.full((self.worldSize, 1), -1)
 
         # Populate transition probability matrix
-        for stateIndex in range(0, self.worldSize-1):
-            state = (stateIndex//self.colSize, stateIndex % self.rowSize)
+        for state in self._stateIterator:
+            stateIndex = self.stateToIndex(state)
             action = self.policy[state]
             neighbors = self._admissableMoves(state)
             probs = self._transitionProbability(action, state, neighbors)
@@ -424,96 +447,76 @@ class SAMDP:
             # remember -1 on diagonal.
             probIndex = 0
             for neighbor in neighbors:
-                neighborIndex = neighbor[0] * \
-                    self.colSize + neighbor[1]
-                transProbMtx[stateIndex, neighborIndex] = probs[probIndex] - \
-                    (stateIndex == neighborIndex)
+                neighborIndex = self.stateToIndex(neighbor)
+                transProbMtx[stateIndex,
+                             neighborIndex] = probs[probIndex]  # - (stateIndex == neighborIndex)
                 probIndex += 1
 
         # Do efficient sparse matrix inversion
-        invTransProb = inv(transProbMtx)
-        mfpts = invTransProb * negIdentityVec
-        x = 0
+        #invTransProb = inv(transProbMtx)
+        #eig = np.linalg.eig(transProbMtx)
+        #tra = np.trace(transProbMtx)
+        #det = np.linalg.det(transProbMtx)
+        invTransProb = np.linalg.inv(transProbMtx)
+        # negIdentityVec=negIdentityVec.transpose()
+        self.mfpt = invTransProb.dot(negIdentityVec)
+        self.renderMFPT()
 
-        """ stepCutoff = len(self._stateIterator)
-        updateNumber = m.floor(stepCutoff * selectionRatio)
-        passageTimes = {state: [] for state in self._stateIterator}
-        mfptRankedUpdates = [None] * updateNumber
-        # compute MFPT for every state
+        mfptRanked = sorted(range(len(self.mfpt)), key=self.mfpt.__getitem__)
 
-        rolloutStateIndicies = random.sample(self._stateIterator, k=trials)
+        mfptRanked = [self.indexToState(mfptRanked[i])
+                      for i in range(0, updateNumber)]
 
-        for startIndex in rolloutStateIndicies:
-            time = 0
-            state = startIndex
-            while time < stepCutoff:
-                time += 1
-                action = self.policy[state]
-                admissableMoves = self._admissableMoves(state)
-                state = tuple([sum(x) for x in zip(state, action)])
-                if state not in admissableMoves:
-                    state = admissableMoves[0]
+        return mfptRanked
 
-                # if out of bounds, go to next starting state
-                if state in self.goalSet:
-                    break
-                elif state in self._stateIterator:
-                    passageTimes[state].append(time)
-                else:
-                    break
+# Tool functions
+    def indexToState(self, stateIndex):
+        return((stateIndex//self.rowSize, stateIndex % self.colSize))
 
-        # compute mfpts
-        for state in self._stateIterator:
-            hits = passageTimes[state]
-            hitNum = len(hits)
-            if hitNum == 0:
-                passageTimes[state] = stepCutoff
-            else:
-                passageTimes[state] = sum(hits) / hitNum
+    def stateToIndex(self, state):
+        return(state[0]*self.colSize + state[1])
 
-        # select top updateNumber states
-        for count in range(updateNumber):
-            key = min(passageTimes, key=passageTimes.get)
-            mfptRankedUpdates[count] = key
-            # disqualify key from future updates
-            passageTimes.pop(key)
- """
-        return mfptRankedUpdates
+    def scoreWalk(self, initialState):
+        steps = 0
+        cost = 0
+        state = initialState
+        while (state not in self.goalSet and steps < self.worldSize):
+
+            # Probabylistically transition
+            action = self.policy[state]
+            admissableStates = self._admissableMoves(state)
+            transitionProbs = self._transitionProbability(action,
+                                                            state,
+                                                            admissableStates)
+            # Uncomment for random transitions
+            state = random.choices(admissableStates,transitionProbs, k=1)
+            state = state[0]
+
+            # Uncomment for deterministic transitions
+            #state = tuple([sum(x) for x in zip(state, action)])
+            #if state not in admissableStates:
+            #    state = admissableStates[0]
+            # tally costs
+            cost += self.rewards[state]
+            steps += 1
+        return(cost, steps)
+
 
 # Benchmark Functions
-    def averageCost(self):
+
+    def averageCost(self, trials):
         avgCost = 0.0
         avgSteps = 0
-        for initialState in self._stateIterator:
-            state = initialState
-            cost = 0.0
-            steps = 0
-            while (state not in self.goalSet and steps < self.worldSize):
+        for state in self._stateIterator:
 
-                # Probabylistically transition
-                action = self.policy[state]
-                admissableStates = self._admissableMoves(state)
-                transitionProbs = self._transitionProbability(action,
-                                                              state,
-                                                              admissableStates)
-                # Uncomment for random transitions
-                #state = random.choices(admissableStates,transitionProbs, k=1)
-                #state = state[0]
-
-                # Uncomment for deterministic transitions
-                state = tuple([sum(x) for x in zip(state, action)])
-                if state not in admissableStates:
-                    state = admissableStates[0]
-                # tally costs
-                cost += self.rewards[state]
-                steps += 1
-
-            avgCost += cost
-            avgSteps += steps
+            for i in range(trials):
+                (cost,steps) = self.scoreWalk(state)
+                avgCost += cost
+                avgSteps += steps
 
         # normalize
-        avgCost /= self.worldSize
-        avgSteps /= self.worldSize
+        avgCost /= self.worldSize * trials
+        avgSteps /= self.worldSize * trials
         return [avgSteps, avgCost]
 
 
@@ -540,7 +543,7 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
     quarter = m.floor(center / 2.0)
 
     # Init
-    goalSet = {(0, worldSize-1), (1, worldSize-1)}
+    goalSet = {(1, worldSize-1)}
     obstacleSet = set()
 
     # flat list of states, useful for comprehensions

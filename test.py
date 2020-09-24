@@ -6,30 +6,49 @@ Created on Mon Apr 20 13:27:14 2020
 @author: sam
 """
 import time # testing and comparison
+import matplotlib.pyplot as plt  # convergence rate tests
 import samdp
 #import os  # play gif at end
 
-# Controls
+### Controls
+
+# Boundary Conditions
 # side length of square state space
-environmentSize = 20
+environmentSize = 10
+
+# Eval Controls
+avgCostTrials = 3 # Number of times to simulate walks from each init state
+
+# Labels
+convergencePlotTitle='Exclusively MFPT Ranked Global Updates Without Seeding'
+
+# Seed Settings
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed =  True
-# seed values by mfpt?
+dijkstraSeed =  False
 mfptSeed = False
-# run mfpt analysis every X steps. It is expensive.
-mfptRefreshPeriod = 999999
+gradientSeed = False
+
+#MFPT Settings
+# Run an MFPT ranked update every N steps
+mfptUpdatePeriod = 1
+# run mfpt analysis every X updates. 3-5 is empriacle optimum
+mfptRefreshPeriod = 4 * mfptUpdatePeriod
 # top X percent of mfpt scores to put in update list.
-mfptUpdateRatio = 0.3
-# Number of random starting states to compute each mfpt score from.
-mfptRolloutNumber = 30
+mfptUpdateRatio = 1.0
+
+# Gradient Settings
 # seed starting values with a gradient minimizaiton?
-gradientSeed = True
-# Run value gradient ranked refresh every N steps
-gradientRefreshPeriod = 1
+gradientSeed = False
+# Run gradient ranked iteration every N steps
+gradientUpdatePeriod = 9999999
+# Run value gradient ranked refresh every N updates
+gradientRefreshPeriod = 999999 * gradientUpdatePeriod
 # update top X percent of states under gradient ranking
 gradientUpdateRatio = 0.33
+
+# Global Update Settings
 # run a global sweep every X steps.
-globalRefeshPeriod = 9999
+globalUpdatePeriod = 9999
 
 # Initialize Environment
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -47,8 +66,18 @@ actionPrimatives = directional8
 transitionModel = samdp.transitionModelGenerator(
     stateSpace, actionPrimatives, 0.2)
 
+# Create key data objects
 demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
 demo.renderFrame()
+timeFrames = []
+avgStepFrames = []
+avgCostFrames = []
+
+# pre-performance eval
+(steps,cost) = demo.averageCost(avgCostTrials)
+timeFrames.append(0)
+avgStepFrames.append(steps)
+avgCostFrames.append(cost)
 
 print('Test initalized\n')
 # pre-compute
@@ -72,36 +101,42 @@ if mfptSeed == True:
     demo.policyIterationStep()
     demo.renderFrame()
     mfptStart = time.time()
-    mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
+    mfptUpdateList = demo.mfptRank(mfptUpdateRatio)
     mfptStop = time.time()
     print('MFPT Run Time: ', mfptStop - mfptStart)
-
-# ???read shoubik first!!! demo.policyUpdate() instead of hybrid step
 
 print('pre-processing complete\n')
 
 # Solve
 totalTime = 0.0
 unconverged = 1
+mfptUpdateList = []
 while unconverged:
-   
+    
+    iteration = demo.solverIterations
+
     # update
-    print('test.py: step num:', demo.solverIterations)
+    print('test.py: step num:', iteration)
     print('test.py: delta value: ', demo.maxDifference, '/',demo.convergenceThresholdEstimate)
 
     # Clock in
     startTime = time.time()
     
-    # partial update usage
-    if demo.solverIterations % globalRefeshPeriod == 0:
+   ## Select Update
+
+   # Global update
+    if iteration % globalUpdatePeriod == 0:
         demo.updateList = demo.problemSet
         # Convergence can only be accurately tested for after a global update.
-    elif demo.solverIterations % gradientRefreshPeriod:
+    #MFPT Update
+    elif iteration % mfptUpdatePeriod == 0:
+        if (iteration % mfptRefreshPeriod)*len(mfptUpdateList) ==0:
+            print('MFPT RE-RANK: INIT')
+            mfptUpdateList = demo.mfptRank(mfptUpdateRatio)
+        demo.updateList = mfptUpdateList
+    #Gradient Update
+    elif iteration % gradientRefreshPeriod:
         demo.updateList = demo.gradientRank(gradientUpdateRatio)
-    elif demo.solverIterations % mfptRefreshPeriod == 0:
-        print('MFPT RE-RANK: INIT')
-        demo.updateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
-        print('MFPT RE-RANK: COMPLETE')
 
     # Give our ranked problem set, update
     demo.hybridIterationStep()
@@ -113,15 +148,19 @@ while unconverged:
     print('test.py: deltaTime: ',deltaTime)
     totalTime += deltaTime
 
+    # Score performance
+    (steps,cost) = demo.averageCost(avgCostTrials)
+    timeFrames.append(totalTime)
+    avgStepFrames.append(steps)
+    avgCostFrames.append(cost)
 
     # Save conditions
-    stepNum = demo.solverIterations
     print('RENDER FRAME CHECK: INIT')
-    if stepNum < 20:
+    if iteration < 20:
         demo.renderFrame()
-    elif stepNum > 20 and stepNum % 3 == 0:
+    elif iteration > 20 and iteration % 1 == 0:
         demo.renderFrame()
-    elif stepNum < 30 and stepNum % 1 == 0:
+    elif iteration < 30 and iteration % 1 == 0:
         demo.renderFrame()
     print('RENDER FRAME CHECK: COMPLETE')
 
@@ -139,8 +178,18 @@ print('run time: ',  totalTime,'\n')
 
 # final frame buffer flush
 demo.writeOutFrameBuffer()
+
+# Generate convergence plot
+lines = plt.plot(timeFrames, avgStepFrames,
+                 timeFrames, avgCostFrames)
+plt.setp(lines[0])
+plt.setp(lines[1])
+plt.title(convergencePlotTitle)
+plt.legend(('Average Steps To Goal', 'Average Cost to  Goal'), loc='upper right')
+plt.savefig('RenderingFrames/convergence.png')
+
 # stitch to gif
-# demo.renderGIF()
+demo.renderGIF()
 
 # Report Results
 #os.system('xdg-open out.mp4')

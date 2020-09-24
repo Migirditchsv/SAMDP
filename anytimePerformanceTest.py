@@ -15,13 +15,14 @@ import matplotlib.pyplot as plt  # convergence rate tests
 print("AnytimePerformaceTest Begin")
 #### Controls ####
 # side length of square state space
-environmentSize = 12
+environmentSize = 25
 # title of data for this run
-convergencePlotTitle = 'MFPT Updates with Value Gradient Smoothed Seeding'
+convergencePlotTitle = 'Convergence With Exclusive Full MFPT Ranked Updates'
+
 
 # Dijkstra Controls
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed = True
+dijkstraSeed = False
 
 # mfpt Controls
 # seed values by mfpt?
@@ -29,9 +30,9 @@ mfptSeed = False
 # run an mfpt ranked update every N iterations
 mfptUpdatePeriod = 1
 # run mfpt analysis every X mpft updates. refresh every 3-5 iterations
-mfptRefreshPeriod = 1
+mfptRefreshPeriod = 4
 # top X percent of mfpt scores to put in update list.
-mfptUpdateRatio = 0.5
+mfptUpdateRatio = 1.0
 
 # Gradient Smoothing Controls
 # seed starting values with a gradient minimizaiton?
@@ -45,7 +46,7 @@ gradientUpdateRatio = 0.7
 
 # Global updates
 # run a global sweep every X steps. Overrides other concerent update types
-globalUpdatePeriod = 9999
+globalUpdatePeriod = 999999
 
 #### Initializeation ####
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -64,42 +65,6 @@ transitionModel = samdp.transitionModelGenerator(
     stateSpace, actionPrimatives, 0.2)
 
 
-# #### Compute optimal value / policy
-# optimal = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
-# # setup
-# optimalTimeStamps = []
-# optimalAverageSteps = []
-# optimalAverageCost = []
-# optimal.updateList = optimal.normalSet
-# optimalComputeTime = 0.0
-# while optimal.maxDifference > optimal.convergenceThresholdEstimate:
-
-#     print('test.py: optimal precompute step num:', optimal.solverIterations)
-#     optimalStartTime = time.time()
-#     optimal.hybridIterationStep()
-#     optimalEndTime = time.time()
-#     optimalComputeTime += optimalEndTime - optimalStartTime
-#     score = optimal.averageCost()
-#     # log scores
-#     optimalTimeStamps.append( optimalComputeTime )
-#     optimalAverageSteps.append( score[0] )
-#     optimalAverageCost.append( score[1] )
-
-
-# print("Optimal exhaustive benchmark complete \n")
-# lines = plt.plot(optimalTimeStamps, optimalAverageSteps,
-#                  optimalTimeStamps, optimalAverageCost)
-# plt.setp(lines[0])
-# plt.setp(lines[1])
-# plt.title("Traditional Hybrid Policy Value Iteration Convergence")
-# plt.legend(('Average Steps To Goal', 'Average Cost to  Goal'),loc='upper right')
-# plt.show()
-# plt.draw()
-
-
-# optimal.policy/valueFunction can now be refferenced.
-
-
 # Data holders
 demoTimeStamps = []
 demoAverageSteps = []
@@ -109,7 +74,7 @@ demoAverageCost = []
 demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
 demo.renderFrame()
 # pre-performance eval
-results = demo.averageCost()
+results = demo.averageCost(3)
 steps = results[0]
 cost = results[1]
 demoTimeStamps.append(0)
@@ -140,6 +105,7 @@ if mfptSeed == True:
     mfptStart = time.time()
     mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
     mfptStop = time.time()
+    demp.renderMFPT()
     print('MFPT Run Time: ', mfptStop - mfptStart)
 
 
@@ -160,7 +126,7 @@ while unconverged:
     iteration = demo.solverIterations
 
     # partial update usage
-    if iteration % globalUpdatePeriod == 0:
+    if (iteration % globalUpdatePeriod == 0):
         demo.updateList = demo.problemSet
         print('Global Update Queued')
     elif iteration % gradientUpdatePeriod == 0:
@@ -172,6 +138,7 @@ while unconverged:
         if (iteration // mfptUpdatePeriod) % mfptRefreshPeriod == 0:
             mfptUpdateList = demo.mfptRank(mfptUpdateRatio)
         demo.updateList = mfptUpdateList
+        demo.renderMFPT()
         print('MFPT Update Queued')
     else:  # default to global update
         demo.updateList = demo.problemSet
@@ -195,7 +162,7 @@ while unconverged:
     demoAverageSteps.append(steps)
     demoAverageCost.append(cost)
     # render gradient
-    demo.renderValueGradient()
+    #demo.renderValueGradient()
 
     # Save conditions
     stepNum = iteration
@@ -216,11 +183,7 @@ while unconverged:
     # iteration finished. New block
     print('\n')
 
-# Smooth final solution with one global update
-demo.updateList = demo.normalSet
-demo.hybridIterationStep()
-demo.hybridIterationStep()
-demo.hybridIterationStep()
+
 # Complete. Report
 print('COMPLETE')
 print('run time: ',  totalTime, '\n')
