@@ -11,31 +11,32 @@ import math as m  # floor
 import matplotlib.pyplot as plt  # convergence rate tests
 # import os  # play gif at end
 
+
+print("AnytimePerformaceTest Begin")
 #### Controls ####
 # side length of square state space
-environmentSize = 20
+environmentSize = 25
 # title of data for this run
-convergencePlotTitle = 'MFPT Updates with Value Gradient Smoothed Seeding'
+convergencePlotTitle = 'Convergence With Exclusive Full MFPT Ranked Updates'
+
 
 # Dijkstra Controls
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed =  True
+dijkstraSeed = False
 
 # mfpt Controls
 # seed values by mfpt?
 mfptSeed = False
 # run an mfpt ranked update every N iterations
 mfptUpdatePeriod = 1
-# run mfpt analysis every X mpft updates. It is expensive.
-mfptRefreshPeriod = 3
+# run mfpt analysis every X mpft updates. refresh every 3-5 iterations
+mfptRefreshPeriod = 4
 # top X percent of mfpt scores to put in update list.
-mfptUpdateRatio = 0.5
-# Number of random starting states to compute each mfpt score from.
-mfptRolloutNumber = m.floor(0.3 * environmentSize)
+mfptUpdateRatio = 1.0
 
 # Gradient Smoothing Controls
 # seed starting values with a gradient minimizaiton?
-gradientSeed = True 
+gradientSeed = False
 # Run a gradient ranked update every N steps
 gradientUpdatePeriod = 9999
 # Run value gradient ranked refresh every N steps
@@ -45,7 +46,7 @@ gradientUpdateRatio = 0.7
 
 # Global updates
 # run a global sweep every X steps. Overrides other concerent update types
-globalUpdatePeriod = 9999
+globalUpdatePeriod = 999999
 
 #### Initializeation ####
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -53,51 +54,15 @@ stateSpace = samdp.stateSpaceGenerator(environmentSize)
 # When defining action primatives, the iteration schemes break ties between
 # expected utility of actions by the order they appear in the primatives list.
 # null actions (0,0), should therefore always be listed LAST
-directional8 = [(0,0), (1, 0), (-1, 0), (0, 1), (0, -1),
+directional8 = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
                 (-1, -1), (1, 1), (-1, 1), (1, -1)]
 
-directional4 = [(0,0), (1, 0), (-1, 0), (0, 1), (0, -1)]
+directional4 = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)]
 
 actionPrimatives = directional8
 
 transitionModel = samdp.transitionModelGenerator(
     stateSpace, actionPrimatives, 0.2)
-
-
-# #### Compute optimal value / policy
-# optimal = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
-# # setup
-# optimalTimeStamps = []
-# optimalAverageSteps = []
-# optimalAverageCost = []
-# optimal.updateList = optimal.normalSet
-# optimalComputeTime = 0.0
-# while optimal.maxDifference > optimal.convergenceThresholdEstimate:
-
-#     print('test.py: optimal precompute step num:', optimal.solverIterations)
-#     optimalStartTime = time.time()
-#     optimal.hybridIterationStep()
-#     optimalEndTime = time.time()
-#     optimalComputeTime += optimalEndTime - optimalStartTime
-#     score = optimal.averageCost()
-#     # log scores
-#     optimalTimeStamps.append( optimalComputeTime )
-#     optimalAverageSteps.append( score[0] )
-#     optimalAverageCost.append( score[1] )
-
-
-# print("Optimal exhaustive benchmark complete \n")
-# lines = plt.plot(optimalTimeStamps, optimalAverageSteps,
-#                  optimalTimeStamps, optimalAverageCost)
-# plt.setp(lines[0])
-# plt.setp(lines[1])
-# plt.title("Traditional Hybrid Policy Value Iteration Convergence")
-# plt.legend(('Average Steps To Goal', 'Average Cost to  Goal'),loc='upper right')
-# plt.show()
-# plt.draw()
-
-
-# optimal.policy/valueFunction can now be refferenced.
 
 
 # Data holders
@@ -109,7 +74,7 @@ demoAverageCost = []
 demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
 demo.renderFrame()
 # pre-performance eval
-results = demo.averageCost()
+results = demo.averageCost(3)
 steps = results[0]
 cost = results[1]
 demoTimeStamps.append(0)
@@ -140,9 +105,9 @@ if mfptSeed == True:
     mfptStart = time.time()
     mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
     mfptStop = time.time()
+    demp.renderMFPT()
     print('MFPT Run Time: ', mfptStop - mfptStart)
 
-# ???read shoubik first!!! demo.policyUpdate() instead of hybrid step
 
 print('pre-processing complete\n')
 
@@ -161,18 +126,19 @@ while unconverged:
     iteration = demo.solverIterations
 
     # partial update usage
-    if iteration % globalUpdatePeriod == 0:
+    if (iteration % globalUpdatePeriod == 0):
         demo.updateList = demo.problemSet
         print('Global Update Queued')
-    elif iteration % gradientUpdatePeriod:
+    elif iteration % gradientUpdatePeriod == 0:
         if (iteration // gradientUpdatePeriod) % gradientRefreshPeriod == 0:
             gradientUpdateList = demo.gradientRank(gradientUpdateRatio)
         demo.updateList = gradientUpdateList
         print('Gradient Update Queued')
-    elif iteration % mfptUpdatePeriod:
+    elif iteration % mfptUpdatePeriod == 0:
         if (iteration // mfptUpdatePeriod) % mfptRefreshPeriod == 0:
-            mfptUpdateList = demo.mfptRank(mfptUpdateRatio, mfptRolloutNumber)
+            mfptUpdateList = demo.mfptRank(mfptUpdateRatio)
         demo.updateList = mfptUpdateList
+        demo.renderMFPT()
         print('MFPT Update Queued')
     else:  # default to global update
         demo.updateList = demo.problemSet
@@ -196,7 +162,7 @@ while unconverged:
     demoAverageSteps.append(steps)
     demoAverageCost.append(cost)
     # render gradient
-    demo.renderValueGradient()
+    #demo.renderValueGradient()
 
     # Save conditions
     stepNum = iteration
@@ -217,13 +183,13 @@ while unconverged:
     # iteration finished. New block
     print('\n')
 
+
 # Complete. Report
 print('COMPLETE')
 print('run time: ',  totalTime, '\n')
 
 #### Report Results ####
 #os.system('xdg-open out.mp4')
-# repost as plots
 # clean data
 demoTimeStamps.pop(1)
 demoAverageCost.pop(1)

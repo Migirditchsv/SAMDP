@@ -5,6 +5,9 @@ Created on Mon Apr 20 11:27:27 2020
 
 @author: sam
 """
+from matplotlib.pyplot import figure
+from scipy.sparse.linalg import inv  # matrix inevrsion for MFPT
+from scipy.sparse import csc_matrix  # matrix inevrsion for MFPT
 import numpy as np
 import math as m  # floor for terrain generation
 import random  # random obstacle generation
@@ -12,6 +15,7 @@ import sys  # sys.exit for warnings
 import matplotlib.pyplot as plt  # vis tool
 import seaborn as sns  # vis tool
 import os  # datafile management
+import time  # DEBUGGING
 
 
 class SAMDP:
@@ -34,8 +38,10 @@ class SAMDP:
     # goalValue = 1.0  # value of _stateSpace to look for in id'ing goal pts.
     # obstacleValue = -0.1  # value of inaccessible points
     # passiveValue = 0.0 # value of transitioning to a normal space
-    gamma = 0.9  # exponential discount factor
-    maxSteps = 1000  # Max allowable solver steps
+    gamma = 0.95  # exponential discount factor
+    maxSteps = 300  # Max allowable solver steps
+
+    # warmup
     # num of zeros to pad frame counter
     frameMagnitude = m.ceil(m.log(maxSteps) / m.log(10))
     folderPath = './RenderingFrames'  # where to dump pre-rendered frames. Not safe rn
@@ -44,7 +50,7 @@ class SAMDP:
                  _transitionModel, _epsilon=0.01):
 
         # Safety checks
-        # eventually upgrade to handle rectangular
+        # eventually upgrade to handle rectangular domain
         [self.rowSize, self.colSize] = _stateSpace.shape
         self.worldSize = self.rowSize * self.colSize
         if self.rowSize != self.colSize:
@@ -79,9 +85,11 @@ class SAMDP:
         self.obstacleValue = float(np.nanmin(self.valueFunction))
 
         # public vars
+        # Stores mfpt scores by state index
+        self.mfpt = []
         self.frameBuffer = 0  # number of frames being stored in ram
         self.frameIndex = 1
-        self.solverIterations = 0
+        self.solverIterations = 1
         self.updateList = self._stateIterator  # change in loop for partial update
         self.goalSet = {state for state in self._stateIterator
                         if self.valueFunction[state] == self.goalValue}
@@ -107,7 +115,7 @@ class SAMDP:
             # Lookahead
             qFunction = self._lookAhead(state)
 
-            # find max and argmax of q. Lists are w/o built in max :(
+            # find max and argmax of q.
             def f(i): return qFunction[i]
             argMax = max(range(len(qFunction)), key=f)
             actMax = self.actionPrimatives[argMax]
@@ -117,7 +125,7 @@ class SAMDP:
 
     def hybridIterationStep(self):
         # A sumultainous update to value and then policy optimimzation
-        for state in self.updateList:  # self._stateIterator:
+        for state in self.updateList:
 
             # Skip goal states
             if state in self.goalSet:
@@ -171,8 +179,7 @@ class SAMDP:
         return qFunction
 
     def _admissableMoves(self, currentState):
-        # Needs rewrite for speed and obstacles.
-        # Maybe use another dic { (r,c): [ ]}
+
         r = int(currentState[0])
         c = int(currentState[1])
         rows = [r]
@@ -192,6 +199,7 @@ class SAMDP:
             for newC in cols:
                 nextState = (newR, newC)
                 newStates.append(nextState)
+
         return(newStates.copy())
 
     def _transitionProbability(self, action, state, newStates):
@@ -206,33 +214,40 @@ class SAMDP:
         prob = [i * norm for i in prob]
         return(prob)
 
+    # Rendering methods
+
     def renderFrame(self, renderValueGradient=False):
         # renders the current policy and value functions into a single frame
-        # stored in self._frames[]
-        # plot it
-        fig, (axPolicy, axValue) = plt.subplots(nrows=1, ncols=2,
-                                                figsize=(50, 30))
-        # Bounds
-        # meanVal = np.nanmean(self.valueFunction)
-        # minValue = meanVal - ( 0.5 * abs(meanVal) )
-        # maxValue = meanVal + ( 0.5 * abs(meanVal) )
+        # stored in self._frames[].
 
-        # (row, col) coordinate form in world iterator
-        X = [state[1] for state in self._stateIterator]
-        Y = [state[0] for state in self._stateIterator]
+        # Settings
+        offset = 0.5  # To align vectors with heatmap plot
+
+        # Bounds
+        meanVal = np.nanmean(self.valueFunction)
+        minValue = meanVal - (0.5 * abs(meanVal))
+        maxValue = meanVal + (0.5 * abs(meanVal))
+
+        # Format Data
+        X = [state[1] + offset for state in self._stateIterator]
+        Y = [state[0] + offset for state in self._stateIterator]
         U = [self.policy[state][1] for state in self._stateIterator]
         V = [-self.policy[state][0] for state in self._stateIterator]
-        axPolicy.quiver(X, Y, U, V, scale=25)
-        axPolicy.set_ylim(axPolicy.get_ylim()[::-1])
-        sns.heatmap(self.valueFunction, annot=True, cbar=False, fmt="0.2f",
-                    linewidths=.01, ax=axValue, annot_kws={"size": 20})
+
+        # plot it
+        fig = figure()
+        plt.quiver(X, Y, U, V, scale=50, zorder=10, color='cyan')
+        # plt.set_ylim(plt.get_ylim())
+        sns.heatmap(self.valueFunction, annot=False, cbar=True, fmt="0.2f",
+                    linewidths=.01, annot_kws={"size": 4}, zorder=0)
 
         # title
-        string = ['Frame Number:', str(self.solverIterations)]
+        string = ['Solver Iteration:', str(self.solverIterations)]
         string = ' '.join(string)
-        plt.suptitle(string, fontsize=50)
-        # fig.canvas.draw()
-        self._frames.append(fig)  # ([axPolicy, axValue,])
+        plt.title(string, fontsize=15)
+
+        # housekeeping
+        self._frames.append(fig)
         plt.close(fig)
         self.frameBuffer += 1
 
@@ -264,91 +279,6 @@ class SAMDP:
         command = 'ffmpeg -framerate 2 -i '+self.folderPath+'/img%0' + \
             str(self.frameMagnitude)+'d.png -g 8 -c:v libx264 -r 2 out.mp4'
         os.system(command)
-
-    def DijkstraValueSeed(self):
-        # Runs the dijkstra alg from the first goal state,
-        # moving along action primatives.
-
-        # unvisited states
-        unvisited = self.normalSet.copy()
-        # start from goal states
-        currentStates = self.goalSet
-        # fringe is empty
-        fringe = set()
-
-        # Init values to lowest possible
-        dijkstraValue = np.empty_like(self.valueFunction)
-        for state in self._stateIterator:
-            if state in self.goalSet:
-                dijkstraValue[state] = self.goalValue
-            else:
-                dijkstraValue[state] = self.obstacleValue
-
-        # Loop while unvisited not empty
-        while len(unvisited) > 0:
-
-            # add to fringe from successor of current states
-            for state in currentStates:
-                # Add successors of state to fringe
-                successors = self._admissableMoves(state)
-                # update successors values and check if new fringe
-                for newState in successors:
-                    if newState in self.obstacleSet:
-                        continue
-                    if newState in self.goalSet:
-                        continue
-                    newValue = self.rewards[newState] + dijkstraValue[state]
-                    if newValue > dijkstraValue[newState]:
-                        dijkstraValue[newState] = newValue
-                    if newState in unvisited:
-                        unvisited.remove(newState)
-                        fringe.add(newState)
-            currentStates = fringe.copy()
-            fringe.clear()
-
-        # Push dijkstra values into value function
-        self.valueFunction = dijkstraValue.copy()
-        self.holdValueFunction = dijkstraValue.copy()
-
-        return
-
-    def gradientRank(self, selectionRatio, displayGradient=False):
-        # check gradient for all states. Really is comparing max slope in value
-        # minus that direction's reward for non-obstacle neighbors
-
-        # set rank size
-        selectionSize = m.floor(len(self._stateIterator) * selectionRatio)
-        gradientRank = []
-
-        # map states to max derivatives in a dic
-        valueGradients = {state: 0.0 for state in self.normalSet}
-        for state in self._stateIterator:
-
-            # Init values for state
-            stateReward = self.rewards[state]
-            stateValue = self.valueFunction[state]
-            maxValueGradient = 0
-            # find state neighbors
-            neighborSet = self._admissableMoves(state)
-            for neighbor in neighborSet:
-                neighborReward = self.rewards[neighbor]
-            # compute reward and value derivative for neighbor
-                neighborValue = self.valueFunction[neighbor]
-                deltaValue = neighborValue - stateValue
-                deltaReward = neighborReward - stateReward
-                derivative = abs(deltaValue - deltaReward)
-                if derivative > maxValueGradient:
-                    maxValueGradient = derivative
-            # store top gradient in dic
-            valueGradients[state] = maxValueGradient
-
-        # Rank
-        for index in range(selectionSize):
-            state = max(valueGradients, key=valueGradients.get)
-            gradientRank.append(state)
-            valueGradients.pop(state)
-
-        return gradientRank.copy()
 
     def renderValueGradient(self):
 
@@ -396,87 +326,219 @@ class SAMDP:
         figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
         plt.close()
 
-    def mfptRank(self, selectionRatio, trials):
-        stepCutoff = len(self._stateIterator)
-        updateNumber = m.floor(stepCutoff * selectionRatio)
-        passageTimes = {state: [] for state in self._stateIterator}
-        mfptRankedUpdates = [None] * updateNumber
-        # compute MFPT for every state
-
-        rolloutStateIndicies = random.sample(self._stateIterator, k=trials)
-
-        for startIndex in rolloutStateIndicies:
-            time = 0
-            state = startIndex
-            while time < stepCutoff:
-                time += 1
-                action = self.policy[state]
-                admissableMoves = self._admissableMoves(state)
-                state = tuple([sum(x) for x in zip(state, action)])
-                if state not in admissableMoves:
-                    state = admissableMoves[0]
-
-                # if out of bounds, go to next starting state
-                if state in self.goalSet:
-                    break
-                elif state in self._stateIterator:
-                    passageTimes[state].append(time)
-                else:
-                    break
-
-        # compute mfpts
+    def renderMFPT(self):
+        mfptGrid = np.zeros((self.rowSize, self.colSize))
         for state in self._stateIterator:
-            hits = passageTimes[state]
-            hitNum = len(hits)
-            if hitNum == 0:
-                passageTimes[state] = stepCutoff
+            stateIndex = self.stateToIndex(state)
+            mfptGrid[state] = self.mfpt[stateIndex]
+        figure, ax = plt.subplots(1, 1, figsize=(20, 20))
+        sns.heatmap(mfptGrid, annot=False, cbar=True, fmt=".2g",
+                    linewidths=.01, ax=ax, annot_kws={"size": 14})
+        titleString = ' '.join(['MFPT Values at Iteration',
+                                str(self.solverIterations)])
+        # ax.invert_yaxis()
+        plt.suptitle(titleString, fontsize=35)
+        frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
+        fileName = 'MFPT'+frameLabel+'.png'
+        filePath = self.folderPath+'/'+fileName
+        print('saving: ', filePath)
+        figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+    # Ranking algs
+
+    def DijkstraValueSeed(self):
+        # Runs the dijkstra alg from the first goal state,
+        # moving along action primatives.
+
+        # unvisited states
+        unvisited = self.normalSet.copy()
+        # start from goal states
+        currentStates = self.goalSet
+        # fringe is empty
+        fringe = set()
+        # Init values to lowest possible
+        dijkstraValue = np.empty_like(self.valueFunction)
+
+        for state in self._stateIterator:
+            if state in self.goalSet:
+                dijkstraValue[state] = self.goalValue
             else:
-                passageTimes[state] = sum(hits) / hitNum
+                dijkstraValue[state] = self.obstacleValue
 
-        # select top updateNumber states
-        for count in range(updateNumber):
-            key = min(passageTimes, key=passageTimes.get)
-            mfptRankedUpdates[count] = key
-            # disqualify key from future updates
-            passageTimes.pop(key)
+        # Loop while unvisited not empty
+        while len(unvisited) > 0:
 
-        return mfptRankedUpdates
+            # add to fringe from successor of current states
+            for state in currentStates:
+                # Add successors of state to fringe
+                successors = self._admissableMoves(state)
+                # update successors values and check if new fringe
+                for newState in successors:
+                    if newState in self.obstacleSet:
+                        continue
+                    if newState in self.goalSet:
+                        continue
+                    newValue = self.rewards[newState] + dijkstraValue[state]
+                    if newValue > dijkstraValue[newState]:
+                        dijkstraValue[newState] = newValue
+                    if newState in unvisited:
+                        unvisited.remove(newState)
+                        fringe.add(newState)
+            currentStates = fringe.copy()
+            fringe.clear()
+
+        # Push dijkstra values into value function
+        self.valueFunction = dijkstraValue.copy()
+        self.holdValueFunction = dijkstraValue.copy()
+
+        return
+
+    def gradientRank(self, selectionRatio):
+        # check gradient for all states. Really is comparing max slope in value
+        # minus that direction's reward for non-obstacle neighbors
+
+        # set rank size
+        selectionSize = m.floor(len(self._stateIterator) * selectionRatio)
+        gradientRank = []
+
+        # map states to max derivatives in a dic
+        valueGradients = {state: 0.0 for state in self.normalSet}
+        for state in self._stateIterator:
+
+            # Init values for state
+            stateReward = self.rewards[state]
+            stateValue = self.valueFunction[state]
+            maxValueGradient = 0
+            # find state neighbors
+            neighborSet = self._admissableMoves(state)
+            for neighbor in neighborSet:
+                neighborReward = self.rewards[neighbor]
+            # compute reward and value derivative for neighbor
+                neighborValue = self.valueFunction[neighbor]
+                deltaValue = neighborValue - stateValue
+                deltaReward = neighborReward - stateReward
+                derivative = abs(deltaValue - deltaReward)
+                if derivative > maxValueGradient:
+                    maxValueGradient = derivative
+            # store top gradient in dic
+            valueGradients[state] = maxValueGradient
+
+        # Rank
+        for index in range(selectionSize):
+            state = max(valueGradients, key=valueGradients.get)
+            gradientRank.append(state)
+            valueGradients.pop(state)
+
+        return gradientRank.copy()
+
+    def mfptRank(self, selectionRatio, displayMFPT=False):
+        # Init
+        tic = time.time()  # debug
+
+        updateNumber = m.floor(selectionRatio * self.worldSize)
+        builderMtx = np.zeros((self.worldSize, self.worldSize))
+        negIdentityVec = np.full((self.worldSize, 1), -1)
+
+        toc = time.time()
+        print('>>> mfpt init dt = ', tic-toc, '\n')
+
+        tic = time.time()
+        # Populate transition probability matrix
+        for state in self._stateIterator:
+            stateIndex = self.stateToIndex(state)
+            action = self.policy[state]
+            neighbors = self._admissableMoves(state)
+            probs = self._transitionProbability(action, state, neighbors)
+            # convert neighbor states to state indicies and insert probs
+            # remember -1 on diagonal.
+            probIndex = 0
+            for neighbor in neighbors:
+                neighborIndex = self.stateToIndex(neighbor)
+                builderMtx[stateIndex,
+                           neighborIndex] = probs[probIndex] - (stateIndex == neighborIndex)
+                probIndex += 1
+        toc = time.time()
+        print('>>> mfpt populate sparse mtrx dt = ', tic-toc, '\n')
+
+        tic = time.time()
+        # Do efficient sparse matrix inversion
+        transProbMtx = csc_matrix(builderMtx)
+        invTransProb = inv(transProbMtx)
+        invTransProb = invTransProb.A  # cast to np array
+        result = np.dot(invTransProb, negIdentityVec)
+        self.mfpt = [result[i][0] for i in range(len(result))]
+        toc = time.time()
+        print('>>> mfpt mtrx inversion dt = ', tic-toc, '\n')
+
+        # Numpy Version
+        #invTransProb = np.linalg.inv(transProbMtx)
+        #self.mfpt = invTransProb.matmul(negIdentityVec)
+        # self.renderMFPT()
+
+        mfptRanked = sorted(range(len(self.mfpt)), key=self.mfpt.__getitem__)
+
+        mfptRanked = [self.indexToState(mfptRanked[i])
+                      for i in range(0, updateNumber)]
+
+        return mfptRanked
+
+# Support functions
+    def indexToState(self, stateIndex):
+        return((stateIndex//self.rowSize, stateIndex % self.colSize))
+
+    def stateToIndex(self, state):
+        return(state[0]*self.colSize + state[1])
+
+    def scoreWalk(self, initialState):
+        steps = 0
+        cost = 0.0
+        state = initialState
+
+        while (state not in self.goalSet and steps < 2 * self.worldSize):
+
+            # Probabylistically transition
+            action = self.policy[state]
+            admissableStates = self._admissableMoves(state)
+            transitionProbs = self._transitionProbability(action,
+                                                          state,
+                                                          admissableStates)
+            # Uncomment for random transitions
+            state = random.choices(admissableStates, transitionProbs, k=1)
+            state = state[0]
+            if state in self.goalSet:
+                continue
+
+            # Uncomment for deterministic transitions
+            #state = tuple([sum(x) for x in zip(state, action)])
+            # if state not in admissableStates:
+            #    state = admissableStates[0]
+            # tally costs
+            cost += self.rewards[state]
+            steps += 1
+        return(cost)
+
 
 # Benchmark Functions
-    def averageCost(self):
+
+
+    def averageCost(self, prevPolicy, trials):
         avgCost = 0.0
-        avgSteps = 0
-        for initialState in self._stateIterator:
-            state = initialState
-            cost = 0.0
-            steps = 0
-            while (state not in self.goalSet and steps < self.worldSize):
+        deltaPolicy = 0  # number of changed states between policy iterations
+        for state in self._stateIterator:
 
-                # Probabylistically transition
-                action = self.policy[state]
-                admissableStates = self._admissableMoves(state)
-                transitionProbs = self._transitionProbability(action,
-                                                              state,
-                                                              admissableStates)
-                # Uncomment for random transitions
-                #state = random.choices(admissableStates,transitionProbs, k=1)
-                #state = state[0]
+            # Check delta policy
+            if self.policy[state] != prevPolicy[state]:
+                deltaPolicy += 1
 
-                # Uncomment for deterministic transitions
-                state = tuple([sum(x) for x in zip(state, action)])
-                if state not in admissableStates:
-                    state = admissableStates[0]
-                # tally costs
-                cost += self.rewards[state]
-                steps += 1
-
-            avgCost += cost
-            avgSteps += steps
+            for i in range(trials):
+                (cost) = self.scoreWalk(state)
+                avgCost += cost
 
         # normalize
-        avgCost /= self.worldSize
-        avgSteps /= self.worldSize
-        return [avgSteps, avgCost]
+        avgCost /= self.worldSize * trials
+        deltaPolicy /= self.worldSize
+        return [deltaPolicy, avgCost]
 
 
 # Setup functions
@@ -502,7 +564,7 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
     quarter = m.floor(center / 2.0)
 
     # Init
-    goalSet = {(0, worldSize-1), (1, worldSize-1)}
+    goalSet = {(1, worldSize-1)}
     obstacleSet = set()
 
     # flat list of states, useful for comprehensions
