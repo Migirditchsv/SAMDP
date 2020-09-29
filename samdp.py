@@ -15,6 +15,7 @@ import sys  # sys.exit for warnings
 import matplotlib.pyplot as plt  # vis tool
 import seaborn as sns  # vis tool
 import os  # datafile management
+import time  # DEBUGGING
 
 
 class SAMDP:
@@ -85,7 +86,7 @@ class SAMDP:
 
         # public vars
         # Stores mfpt scores by state index
-        self.mfpt = np.array((self.worldSize, 1))
+        self.mfpt = []
         self.frameBuffer = 0  # number of frames being stored in ram
         self.frameIndex = 1
         self.solverIterations = 1
@@ -235,10 +236,10 @@ class SAMDP:
 
         # plot it
         fig = figure()
-        plt.quiver(X, Y, U, V, scale=25, zorder=10, color='cyan')
+        plt.quiver(X, Y, U, V, scale=50, zorder=10, color='cyan')
         # plt.set_ylim(plt.get_ylim())
-        sns.heatmap(self.valueFunction, annot=True, cbar=False, fmt="0.2f",
-                    linewidths=.01, annot_kws={"size": 7}, zorder=0)
+        sns.heatmap(self.valueFunction, annot=False, cbar=True, fmt="0.2f",
+                    linewidths=.01, annot_kws={"size": 4}, zorder=0)
 
         # title
         string = ['Solver Iteration:', str(self.solverIterations)]
@@ -331,11 +332,11 @@ class SAMDP:
             stateIndex = self.stateToIndex(state)
             mfptGrid[state] = self.mfpt[stateIndex]
         figure, ax = plt.subplots(1, 1, figsize=(20, 20))
-        sns.heatmap(mfptGrid, annot=True, cbar=True, fmt=".2g",
+        sns.heatmap(mfptGrid, annot=False, cbar=True, fmt=".2g",
                     linewidths=.01, ax=ax, annot_kws={"size": 14})
         titleString = ' '.join(['MFPT Values at Iteration',
                                 str(self.solverIterations)])
-        ax.invert_yaxis()
+        # ax.invert_yaxis()
         plt.suptitle(titleString, fontsize=35)
         frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
         fileName = 'MFPT'+frameLabel+'.png'
@@ -356,9 +357,9 @@ class SAMDP:
         currentStates = self.goalSet
         # fringe is empty
         fringe = set()
-
         # Init values to lowest possible
         dijkstraValue = np.empty_like(self.valueFunction)
+
         for state in self._stateIterator:
             if state in self.goalSet:
                 dijkstraValue[state] = self.goalValue
@@ -432,11 +433,17 @@ class SAMDP:
         return gradientRank.copy()
 
     def mfptRank(self, selectionRatio, displayMFPT=False):
+        # Init
+        tic = time.time()  # debug
+
         updateNumber = m.floor(selectionRatio * self.worldSize)
-        # csc_matrix((self.worldSize, self.worldSize), dtype=float)
-        transProbMtx = np.zeros((self.worldSize, self.worldSize))
+        builderMtx = np.zeros((self.worldSize, self.worldSize))
         negIdentityVec = np.full((self.worldSize, 1), -1)
 
+        toc = time.time()
+        print('>>> mfpt init dt = ', tic-toc, '\n')
+
+        tic = time.time()
         # Populate transition probability matrix
         for state in self._stateIterator:
             stateIndex = self.stateToIndex(state)
@@ -448,19 +455,26 @@ class SAMDP:
             probIndex = 0
             for neighbor in neighbors:
                 neighborIndex = self.stateToIndex(neighbor)
-                transProbMtx[stateIndex,
-                             neighborIndex] = probs[probIndex]  # - (stateIndex == neighborIndex)
+                builderMtx[stateIndex,
+                           neighborIndex] = probs[probIndex] - (stateIndex == neighborIndex)
                 probIndex += 1
+        toc = time.time()
+        print('>>> mfpt populate sparse mtrx dt = ', tic-toc, '\n')
 
+        tic = time.time()
         # Do efficient sparse matrix inversion
-        #invTransProb = inv(transProbMtx)
-        #eig = np.linalg.eig(transProbMtx)
-        #tra = np.trace(transProbMtx)
-        #det = np.linalg.det(transProbMtx)
-        invTransProb = np.linalg.inv(transProbMtx)
-        # negIdentityVec=negIdentityVec.transpose()
-        self.mfpt = invTransProb.dot(negIdentityVec)
-        self.renderMFPT()
+        transProbMtx = csc_matrix(builderMtx)
+        invTransProb = inv(transProbMtx)
+        invTransProb = invTransProb.A  # cast to np array
+        result = np.dot(invTransProb, negIdentityVec)
+        self.mfpt = [result[i][0] for i in range(len(result))]
+        toc = time.time()
+        print('>>> mfpt mtrx inversion dt = ', tic-toc, '\n')
+
+        # Numpy Version
+        #invTransProb = np.linalg.inv(transProbMtx)
+        #self.mfpt = invTransProb.matmul(negIdentityVec)
+        # self.renderMFPT()
 
         mfptRanked = sorted(range(len(self.mfpt)), key=self.mfpt.__getitem__)
 
@@ -469,7 +483,7 @@ class SAMDP:
 
         return mfptRanked
 
-# Tool functions
+# Support functions
     def indexToState(self, stateIndex):
         return((stateIndex//self.rowSize, stateIndex % self.colSize))
 
@@ -478,46 +492,53 @@ class SAMDP:
 
     def scoreWalk(self, initialState):
         steps = 0
-        cost = 0
+        cost = 0.0
         state = initialState
-        while (state not in self.goalSet and steps < self.worldSize):
+
+        while (state not in self.goalSet and steps < 2 * self.worldSize):
 
             # Probabylistically transition
             action = self.policy[state]
             admissableStates = self._admissableMoves(state)
             transitionProbs = self._transitionProbability(action,
-                                                            state,
-                                                            admissableStates)
+                                                          state,
+                                                          admissableStates)
             # Uncomment for random transitions
-            state = random.choices(admissableStates,transitionProbs, k=1)
+            state = random.choices(admissableStates, transitionProbs, k=1)
             state = state[0]
+            if state in self.goalSet:
+                continue
 
             # Uncomment for deterministic transitions
             #state = tuple([sum(x) for x in zip(state, action)])
-            #if state not in admissableStates:
+            # if state not in admissableStates:
             #    state = admissableStates[0]
             # tally costs
             cost += self.rewards[state]
             steps += 1
-        return(cost, steps)
+        return(cost)
 
 
 # Benchmark Functions
 
-    def averageCost(self, trials):
+
+    def averageCost(self, prevPolicy, trials):
         avgCost = 0.0
-        avgSteps = 0
+        deltaPolicy = 0  # number of changed states between policy iterations
         for state in self._stateIterator:
 
+            # Check delta policy
+            if self.policy[state] != prevPolicy[state]:
+                deltaPolicy += 1
+
             for i in range(trials):
-                (cost,steps) = self.scoreWalk(state)
+                (cost) = self.scoreWalk(state)
                 avgCost += cost
-                avgSteps += steps
 
         # normalize
         avgCost /= self.worldSize * trials
-        avgSteps /= self.worldSize * trials
-        return [avgSteps, avgCost]
+        deltaPolicy /= self.worldSize
+        return [deltaPolicy, avgCost]
 
 
 # Setup functions
