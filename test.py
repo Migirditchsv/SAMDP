@@ -15,30 +15,36 @@ import math as m  # Log scale cost fxn
 
 # Boundary Conditions
 # side length of square state space
-environmentSize = 25
+environmentSize = 12
 
 # Eval Controls
-avgCostTrials = 1  # Number of times to simulate walks from each init state
+avgCostTrials = 3  # Number of times to simulate walks from each init state
+avgCostSamplePeriod = 1  # Use every Nth state as a starting point
+plottingOn = True  # Skip making animations for faster results
 
 # Labels
-runTitle = 'MFPT Update Without Seeding'
+runTitle = 'mfpt seed False complex 12x12'
 convergencePlotTitle = runTitle+'\n' + \
-    'Change in Policy Function Between Subsequent Iterations'
-costPlotTitle = runTitle+'\n'+'Expected Utility of MC Versus Time'
+    'Policy Convergence vs. Time'
+costPlotTitle = runTitle+'\n'+'Average Utility of Markov Chain Versus Time'
 
 # Seed Settings
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed = True
+dijkstraSeed = False
 mfptSeed = False
 gradientSeed = False
+
+# Global Update Settings
+# run a global sweep every X steps.
+globalUpdatePeriod = 1111
 
 # MFPT Settings
 # Run an MFPT ranked update every N steps
 mfptUpdatePeriod = 1
 # run mfpt analysis every X updates. 3-5 is empriacle optimum
-mfptRefreshPeriod = 5 * mfptUpdatePeriod
+mfptRefreshPeriod = 4 * mfptUpdatePeriod
 # top X percent of mfpt scores to put in update list.
-mfptUpdateRatio = 0.3
+mfptUpdateRatio = 1.0
 
 # Gradient Settings
 # seed starting values with a gradient minimizaiton?
@@ -50,9 +56,6 @@ gradientRefreshPeriod = 999999 * gradientUpdatePeriod
 # update top X percent of states under gradient ranking
 gradientUpdateRatio = 0.33
 
-# Global Update Settings
-# run a global sweep every X steps.
-globalUpdatePeriod = 999
 
 # Initialize Environment
 stateSpace = samdp.stateSpaceGenerator(environmentSize)
@@ -86,13 +89,15 @@ previousPolicy = demo.policy.copy()
 
 print('Test initalized\n')
 # pre-compute
+dijkstraTimeCost = 0.0
 if dijkstraSeed == True:
     # run dijkstra
     dijkstraStart = time.time()
     demo.DijkstraValueSeed()
     demo.policyIterationStep()
     dijkstraStop = time.time()
-    print('Dijkstra Run Time: ', dijkstraStop - dijkstraStart)
+    dijkstraTimeCost = dijkstraStop - dijkstraStart
+    print('Dijkstra Run Time: ', dijkstraTimeCost)
 
 if gradientSeed == True:
     gradientStartTime = time.time()
@@ -113,9 +118,9 @@ if mfptSeed == True:
 print('pre-processing complete\n')
 
 # Solve
-totalTime = 0.0
-unconverged = 1
+totalTime = dijkstraTimeCost
 mfptUpdateList = []
+unconverged = 1
 while unconverged:
 
     iteration = demo.solverIterations
@@ -124,7 +129,7 @@ while unconverged:
     # update
     print('test.py: step num:', iteration)
     print('test.py: delta value: ', demo.maxDifference,
-          '/', demo.convergenceThresholdEstimate)
+          ':', demo.convergenceThresholdEstimate)
 
     # Clock in
     startTime = time.time()
@@ -134,20 +139,25 @@ while unconverged:
    # Global update
     if iteration % globalUpdatePeriod == 0:
         demo.updateList = demo.problemSet
+        demo.hybridIterationStep()
         # Convergence can only be accurately tested for after a global update.
     # MFPT Update
     elif iteration % mfptUpdatePeriod == 0:
         if (iteration % mfptRefreshPeriod)*len(mfptUpdateList) == 0:
-            print('MFPT RE-RANK: INIT')
+            #print('MFPT RE-RANK: INIT')
             mfptUpdateList = demo.mfptRank(mfptUpdateRatio)
         demo.updateList = mfptUpdateList
+        demo.mfptPolicyIteration()
     # Gradient Update
     elif iteration % gradientRefreshPeriod:
         demo.updateList = demo.gradientRank(gradientUpdateRatio)
 
     # Give our ranked problem set, update
-    demo.hybridIterationStep()
-    unconverged = (demo.maxDifference > demo.convergenceThresholdEstimate) and (iteration<50)
+    unconverged = (demo.maxDifference >
+                   demo.convergenceThresholdEstimate) and\
+        (demo.policy != previousPolicy) and\
+        (iteration < 101) or\
+        (iteration < 5)
 
     # Clock out
     endTime = time.time()
@@ -156,20 +166,22 @@ while unconverged:
     totalTime += deltaTime
 
     # Score performance
-    (deltaPolicy, cost) = demo.averageCost(previousPolicy, avgCostTrials)
+    (deltaPolicy, cost) = demo.averageCost(
+        previousPolicy, avgCostTrials, avgCostSamplePeriod)
     timeFrames.append(totalTime)
     deltaPolicyFrames.append(deltaPolicy)
     avgCostFrames.append(cost)
 
     # Save conditions
-    print('RENDER FRAME CHECK: INIT')
-    if iteration < 20:
-        demo.renderFrame()
-    elif iteration > 20 and iteration % 1 == 0:
-        demo.renderFrame()
-    elif iteration < 30 and iteration % 1 == 0:
-        demo.renderFrame()
-    print('RENDER FRAME CHECK: COMPLETE')
+    if plottingOn:
+        print('RENDER FRAME CHECK: INIT')
+        if iteration < 20:
+            demo.renderFrame()
+        elif iteration > 20 and iteration % 1 == 0:
+            demo.renderFrame()
+        elif iteration < 30 and iteration % 1 == 0:
+            demo.renderFrame()
+        print('RENDER FRAME CHECK: COMPLETE')
 
     if demo.frameBuffer % 60 == 0:
         # One unwritten frame wastes ~10mb of ram, but writing is slow
@@ -190,6 +202,8 @@ demo.writeOutFrameBuffer()
 plt.plot(timeFrames, deltaPolicyFrames,
          marker="x")
 plt.title(convergencePlotTitle)
+plt.xlabel('Elapsed Time [seconds]')
+plt.ylabel('Ratio of states with altered actions')
 #plt.legend(('Change in policy', 'Average Cost to  Goal'), loc='upper right')
 plt.savefig('RenderingFrames/convergence.png')
 plt.close()
@@ -197,11 +211,14 @@ plt.close()
 # Genreate cost plot
 plt.plot(timeFrames, avgCostFrames, marker='x')
 plt.title(costPlotTitle)
+plt.xlabel('Elapsed Time [seconds]')
+plt.ylabel('Average utility over all states')
 plt.savefig('RenderingFrames/cost.png')
 plt.close()
 
 # stitch to gif
-demo.renderGIF()
+if plottingOn:
+    demo.renderGIF()
 
 # Report Results
 #os.system('xdg-open out.mp4')

@@ -35,10 +35,7 @@ class SAMDP:
     '''
 
     # Universal Control Parameters
-    # goalValue = 1.0  # value of _stateSpace to look for in id'ing goal pts.
-    # obstacleValue = -0.1  # value of inaccessible points
-    # passiveValue = 0.0 # value of transitioning to a normal space
-    gamma = 0.95  # exponential discount factor
+    gamma = 0.9  # exponential discount factor
     maxSteps = 300  # Max allowable solver steps
 
     # warmup
@@ -110,6 +107,80 @@ class SAMDP:
         self._frames = []  # list of plots to save
         self._frameIndex = 0
 
+    # Hot loop functions
+    def _admissableMoves(self, currentState):
+
+        r = int(currentState[0])
+        c = int(currentState[1])
+        rows = [r]
+        cols = [c]
+        newStates = []
+        # rows
+        if r > 0:
+            rows.append(r - 1)
+        if r < self.rowSize - 1:
+            rows.append(r + 1)
+        # cols
+        if c > 0:
+            cols.append(c - 1)
+        if c < (self.colSize - 1):
+            cols.append(c + 1)
+        for newR in rows:
+            for newC in cols:
+                nextState = (newR, newC)
+                newStates.append(nextState)
+
+        return(newStates.copy())
+
+    def _transitionProbability(self, action, state, newStates):
+        # default transitions, to be depreciated.
+        pos = (state[0] + action[0], state[1] + action[1])
+        size = max(1, len(newStates) - 1)
+        prob = [0.9 if state == pos else (0.1/size) for state in newStates]
+        # Normalize prob
+        if sum(prob) == 0:
+            return(prob)
+        norm = 1.0 / sum(prob)
+        prob = [i * norm for i in prob]
+        return(prob)
+
+    def _lookAhead(self, currentState):
+        newStates = self._admissableMoves(currentState)
+        rewards = [self.rewards[index] for index in newStates]
+        newValues = [self.holdValueFunction[index] for index in newStates]
+        stateIndex = range(len(newValues))
+
+        qFunction = []
+
+        # Loop over actions
+        for action in self.actionPrimatives:
+            # prob of landing in each new state after action
+            prob = self._transitionProbability(action, currentState, newStates)
+            # risk*reward coefficients for each possible outcome of the action
+            actionOutcomes = [prob[i] * (rewards[i] + self.gamma * newValues[i])
+                              for i in stateIndex]
+            qFunction.append(sum(actionOutcomes))
+        return qFunction
+
+    def _fixedPolicyLookAhead(self, currentState):
+        # Sets the value of a state to a one step lookahead.
+        action = self.policy[currentState]
+        newStates = self._admissableMoves(currentState)
+        rewards = [self.rewards[index] for index in newStates]
+        newValues = [self.holdValueFunction[index] for index in newStates]
+        prob = self._transitionProbability(action, currentState, newStates)
+
+        # fast compute state value under fixed action
+        value = 0.0
+        for stateIndex in range(len(newStates)):
+            value += prob[stateIndex] * \
+                (rewards[stateIndex] + self.gamma * newValues[stateIndex])
+        # Update State Value
+        if currentState not in self.obstacleSet:
+            self.valueFunction[currentState] = value
+
+    # Iteration functions
+
     def policyIterationStep(self):
         for state in self.updateList:
             # Lookahead
@@ -122,6 +193,30 @@ class SAMDP:
 
             # Update Policy
             self.policy[state] = actMax
+
+    def mfptPolicyIteration(self):
+        # First propagate value on all states ordered by current mfpt ranking
+        for state in self.updateList:
+            qFunction = self._fixedPolicyLookAhead(state)
+
+        # Then do a second sweep updating policies as neighboring values have shifted
+        for state in self.updateList:
+            qFunction = self._lookAhead(state)
+            # find max and argmax of q.
+            def f(i): return qFunction[i]
+            argMax = max(range(len(qFunction)), key=f)
+            actMax = self.actionPrimatives[argMax]
+            # Update Policy
+            self.policy[state] = actMax
+
+        # close out
+        diff = abs(self.holdValueFunction - self.valueFunction)
+        hold = np.nanmax(diff)
+        self.maxDifference = hold
+
+        # Update values
+        self.holdValueFunction = self.valueFunction.copy()
+        self.solverIterations += 1
 
     def hybridIterationStep(self):
         # A sumultainous update to value and then policy optimimzation
@@ -158,61 +253,6 @@ class SAMDP:
         self.solverIterations += 1
         # print("SAMDP.hybridIterationStep step: ", self.solverIterations,
         #      "max difference: ", self.maxDifference)
-
-    def _lookAhead(self, currentState):
-        newStates = self._admissableMoves(currentState)
-        rewards = [self.rewards[currentState]] * len(newStates)
-        newValues = [self.holdValueFunction[index] for index in newStates]
-        stateIndex = range(len(newValues))
-
-        qFunction = []
-
-        # Loop over actions
-        for action in self.actionPrimatives:
-            # prob of landing in each new state after action
-            prob = self._transitionProbability(action, currentState, newStates)
-            # risk*reward coefficients for each possible outcome of the action
-            actionOutcomes = [prob[i] * (rewards[i] + self.gamma * newValues[i])
-                              for i in stateIndex]
-            qFunction.append(sum(actionOutcomes))
-
-        return qFunction
-
-    def _admissableMoves(self, currentState):
-
-        r = int(currentState[0])
-        c = int(currentState[1])
-        rows = [r]
-        cols = [c]
-        newStates = []
-        # rows
-        if r > 0:
-            rows.append(r - 1)
-        if r < self.rowSize - 1:
-            rows.append(r + 1)
-        # cols
-        if c > 0:
-            cols.append(c - 1)
-        if c < (self.colSize - 1):
-            cols.append(c + 1)
-        for newR in rows:
-            for newC in cols:
-                nextState = (newR, newC)
-                newStates.append(nextState)
-
-        return(newStates.copy())
-
-    def _transitionProbability(self, action, state, newStates):
-        # default transitions, to be depreciated.
-        pos = (state[0] + action[0], state[1] + action[1])
-        size = max(1, len(newStates) - 1)
-        prob = [0.9 if state == pos else (0.1/size) for state in newStates]
-        # Normalize prob
-        if sum(prob) == 0:
-            return(prob)
-        norm = 1.0 / sum(prob)
-        prob = [i * norm for i in prob]
-        return(prob)
 
     # Rendering methods
 
@@ -434,16 +474,11 @@ class SAMDP:
 
     def mfptRank(self, selectionRatio, displayMFPT=False):
         # Init
-        tic = time.time()  # debug
 
         updateNumber = m.floor(selectionRatio * self.worldSize)
         builderMtx = np.zeros((self.worldSize, self.worldSize))
         negIdentityVec = np.full((self.worldSize, 1), -1)
 
-        toc = time.time()
-        print('>>> mfpt init dt = ', tic-toc, '\n')
-
-        tic = time.time()
         # Populate transition probability matrix
         for state in self._stateIterator:
             stateIndex = self.stateToIndex(state)
@@ -458,18 +493,13 @@ class SAMDP:
                 builderMtx[stateIndex,
                            neighborIndex] = probs[probIndex] - (stateIndex == neighborIndex)
                 probIndex += 1
-        toc = time.time()
-        print('>>> mfpt populate sparse mtrx dt = ', tic-toc, '\n')
 
-        tic = time.time()
         # Do efficient sparse matrix inversion
         transProbMtx = csc_matrix(builderMtx)
         invTransProb = inv(transProbMtx)
         invTransProb = invTransProb.A  # cast to np array
         result = np.dot(invTransProb, negIdentityVec)
         self.mfpt = [result[i][0] for i in range(len(result))]
-        toc = time.time()
-        print('>>> mfpt mtrx inversion dt = ', tic-toc, '\n')
 
         # Numpy Version
         #invTransProb = np.linalg.inv(transProbMtx)
@@ -522,7 +552,7 @@ class SAMDP:
 # Benchmark Functions
 
 
-    def averageCost(self, prevPolicy, trials):
+    def averageCost(self, prevPolicy, trials, samplePeriod):
         avgCost = 0.0
         deltaPolicy = 0  # number of changed states between policy iterations
         for state in self._stateIterator:
@@ -531,9 +561,10 @@ class SAMDP:
             if self.policy[state] != prevPolicy[state]:
                 deltaPolicy += 1
 
-            for i in range(trials):
-                (cost) = self.scoreWalk(state)
-                avgCost += cost
+            if ((state[0]+state[1]) % samplePeriod) == 0:
+                for i in range(trials):
+                    (cost) = self.scoreWalk(state)
+                    avgCost += cost
 
         # normalize
         avgCost /= self.worldSize * trials
@@ -601,6 +632,9 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
         feature2 = (state[1] > center and
                     state[1] != center + quarter and
                     state[0] == center)
+        # bottom right checkerboard
+        feature3 = (state[0] > center) and (state[1] > center) and \
+            (((state[0]+state[1]) % 2) == 0)  # checkerboard pattern
 
         if state in obstacleSet:
             stateSpace[state] = obstacleValue
@@ -611,6 +645,8 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
         elif (feature2):
             obstacleSet.add(state)
             stateSpace[state] = obstacleValue
+        elif (feature3):
+            stateSpace[state] = 0.5*obstacleValue
         else:
             stateSpace[state] = passiveValue
 
@@ -662,12 +698,3 @@ def transitionModelGenerator(stateSpace, actionPrimatives, noiseLevel):
                                         for i in range(len(accessibleStates))]
                 transition[(state, action)] = stateActionUpdatePDF
     return(transition)
-    # Driver Script
-    # stateSpace = stateSpaceGenerator(10, 0.3)
-
-    # actionPrimatives = [ (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
-    #                          (-1, -1), (1, 1), (-1, 1), (1, -1)]
-
-    # transitionModel = transitionModelGenerator(stateSpace, actionPrimatives, 0.2)
-
-    # demo = SAMDP(stateSpace, actionPrimatives, transitionModel)
