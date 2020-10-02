@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt  # vis tool
 import seaborn as sns  # vis tool
 import os  # datafile management
 import time  # DEBUGGING
+# import sandbox  # better matrix inversion
 
 
 class SAMDP:
@@ -41,10 +42,9 @@ class SAMDP:
     # warmup
     # num of zeros to pad frame counter
     frameMagnitude = m.ceil(m.log(maxSteps) / m.log(10))
-    folderPath = './RenderingFrames'  # where to dump pre-rendered frames. Not safe rn
+    folderPath = './RenderingFrames'  # where to dump pre-rendered frames.
 
-    def __init__(self, _stateSpace, _actionPrimatives,
-                 _transitionModel, _epsilon=0.01):
+    def __init__(self, _stateSpace, _actionPrimatives):
 
         # Safety checks
         # eventually upgrade to handle rectangular domain
@@ -55,22 +55,17 @@ class SAMDP:
         # check for and create data file
         if not os.path.exists(self.folderPath):
             os.mkdir(self.folderPath)
-        else:
-            command = 'rm -rf '+self.folderPath
-            os.system(command)
-            os.mkdir(self.folderPath)
+            os.mkdir(self.folderPath+'/Default')
 
-            # ffmpeg crashes if it tries to write to an existing file
-        if os.path.exists('out.mp4'):
-            os.remove('out.mp4')
+        # ffmpeg crashes if it tries to write to an existing file
+        # if os.path.exists('out.mp4'):
+        #    os.remove('out.mp4')
 
         # Self copies
         self.valueFunction = _stateSpace.copy()  # Init from state space
         self.holdValueFunction = np.copy(_stateSpace)
         self.rewards = np.copy(_stateSpace)
         self.actionPrimatives = _actionPrimatives
-        self.transitionModel = _transitionModel
-        self.epsilon = _epsilon
 
         # Internal Params
         self._stateIterator = [(i//self.colSize, i % self.rowSize)
@@ -84,6 +79,7 @@ class SAMDP:
         # public vars
         # Stores mfpt scores by state index
         self.mfpt = []
+        self.mfptRanked = []
         self.frameBuffer = 0  # number of frames being stored in ram
         self.frameIndex = 1
         self.solverIterations = 1
@@ -182,17 +178,29 @@ class SAMDP:
     # Iteration functions
 
     def policyIterationStep(self):
+        # Value convergence step
         for state in self.updateList:
             # Lookahead
-            qFunction = self._lookAhead(state)
+            self._fixedPolicyLookAhead(state)
 
+        # policy update step
+        for state in self.updateList:
+            qFunction = self._lookAhead(state)
             # find max and argmax of q.
             def f(i): return qFunction[i]
             argMax = max(range(len(qFunction)), key=f)
             actMax = self.actionPrimatives[argMax]
-
             # Update Policy
             self.policy[state] = actMax
+
+        # close out
+        diff = abs(self.holdValueFunction - self.valueFunction)
+        hold = np.nanmax(diff)
+        self.maxDifference = hold
+
+        # Update values
+        self.holdValueFunction = self.valueFunction.copy()
+        self.solverIterations += 1
 
     def mfptPolicyIteration(self):
         # First propagate value on all states ordered by current mfpt ranking
@@ -228,7 +236,7 @@ class SAMDP:
                 continue
 
             # Lookahead
-            qFunction = self._lookAhead(state)
+            qFunction = self._filookAhead(state)
 
             # find max and argmax of q. Lists are w/o built in max :(
             def f(i): return qFunction[i]
@@ -256,7 +264,13 @@ class SAMDP:
 
     # Rendering methods
 
-    def renderFrame(self, renderValueGradient=False):
+    def createDataDir(self, runPath):
+        path = self.folderPath+'/'+runPath
+        if os.path.exists(path):
+            os.system('rm -rf '+path)  # generally unsafe but...
+        os.mkdir(path)
+
+    def renderFrame(self, title='', renderValueGradient=False):
         # renders the current policy and value functions into a single frame
         # stored in self._frames[].
 
@@ -282,8 +296,8 @@ class SAMDP:
                     linewidths=.01, annot_kws={"size": 4}, zorder=0)
 
         # title
-        string = ['Solver Iteration:', str(self.solverIterations)]
-        string = ' '.join(string)
+        string = [title, 'Solver Iteration:'+str(self.solverIterations)]
+        string = '\n'.join(string)
         plt.title(string, fontsize=15)
 
         # housekeeping
@@ -294,30 +308,33 @@ class SAMDP:
         if renderValueGradient == True:
             self.renderValueGradient()
 
-    def writeOutFrameBuffer(self):
+    def writeOutFrameBuffer(self, runPath='Default'):
         # the buffer of frames for making movies consumes ram, slowing
         # computation, but writing is also slow. Reccomend writing every ~10
         # frames to avoid crunch
         for figure in self._frames:
             frameLabel = str(self.frameIndex).zfill(self.frameMagnitude)
             fileName = 'img'+frameLabel+'.png'
-            filePath = self.folderPath+'/'+fileName
+            filePath = self.folderPath+'/'+runPath+'/'+fileName
             print('saving: ', filePath)
             figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
             self.frameIndex += 1
         # clear written frames
         self._frames = []
 
-    def renderGIF(self):
-        # extremely ram heavy, delete everything possible
-        del self.valueFunction, self.holdValueFunction, self._frames
+    def renderGIF(self, runTitle='Default'):
         # ffmpeg exits if writing to existing file
         if os.path.exists('out.mp4'):
             os.remove('out.mp4')
 
         # Stitch into gif
-        command = 'ffmpeg -framerate 2 -i '+self.folderPath+'/img%0' + \
-            str(self.frameMagnitude)+'d.png -g 8 -c:v libx264 -r 2 out.mp4'
+        # command = 'ffmpeg -framerate 2 -i '+self.folderPath+'/'+runTitle + \
+        #     '/img0%'+str(self.frameMagnitude) + \
+        #     'd.png -g 8 -c:v libx264 -r 2 '+runTitle+'.mp4'
+        command = 'ffmpeg -framerate 2 -i '+self.folderPath+'/'+runTitle+'/img%0' + \
+            str(self.frameMagnitude)+'d.png -g 8 -c:v libx264 -r 2 ' + \
+            self.folderPath+'/'+runTitle+'/'+runTitle+'.mp4'
+        print('COMMAND: ', command)
         os.system(command)
 
     def renderValueGradient(self):
@@ -480,6 +497,7 @@ class SAMDP:
         negIdentityVec = np.full((self.worldSize, 1), -1)
 
         # Populate transition probability matrix
+
         for state in self._stateIterator:
             stateIndex = self.stateToIndex(state)
             action = self.policy[state]
@@ -494,26 +512,29 @@ class SAMDP:
                            neighborIndex] = probs[probIndex] - (stateIndex == neighborIndex)
                 probIndex += 1
 
-        # Do efficient sparse matrix inversion
-        transProbMtx = csc_matrix(builderMtx)
-        invTransProb = inv(transProbMtx)
-        invTransProb = invTransProb.A  # cast to np array
-        result = np.dot(invTransProb, negIdentityVec)
-        self.mfpt = [result[i][0] for i in range(len(result))]
+        # tic = time.time()
+        # # Do efficient sparse matrix inversion
+        # transProbMtx = csc_matrix(builderMtx)
+        # invTransProb = inv(transProbMtx)
+        # invTransProb = invTransProb.A  # cast to np array
+        # result = np.dot(invTransProb, negIdentityVec)
+        # self.mfpt = [result[i][0] for i in range(len(result))]
+        # toc = time.time()
+        # print('scipy based inversion time: ', toc-tic)
 
         # Numpy Version
-        #invTransProb = np.linalg.inv(transProbMtx)
-        #self.mfpt = invTransProb.matmul(negIdentityVec)
-        # self.renderMFPT()
+        invTransProb = np.linalg.inv(builderMtx)
+        self.mfpt = invTransProb @ negIdentityVec
 
         mfptRanked = sorted(range(len(self.mfpt)), key=self.mfpt.__getitem__)
 
-        mfptRanked = [self.indexToState(mfptRanked[i])
-                      for i in range(0, updateNumber)]
+        self.mfptRanked = [self.indexToState(mfptRanked[i])
+                           for i in range(0, updateNumber)]
 
-        return mfptRanked
 
 # Support functions
+
+
     def indexToState(self, stateIndex):
         return((stateIndex//self.rowSize, stateIndex % self.colSize))
 
@@ -570,6 +591,10 @@ class SAMDP:
         avgCost /= self.worldSize * trials
         deltaPolicy /= self.worldSize
         return [deltaPolicy, avgCost]
+
+    def evolvingWalkInit(population, initStates):
+        position = np.zeros((population, 1))
+        cost = np.zeros(dtype=float)
 
 
 # Setup functions
@@ -633,8 +658,8 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
                     state[1] != center + quarter and
                     state[0] == center)
         # bottom right checkerboard
-        feature3 = (state[0] > center) and (state[1] > center) and \
-            (((state[0]+state[1]) % 2) == 0)  # checkerboard pattern
+        #feature3 = (state[0] > center) and (state[1] > center) and \
+        #    (((state[0]+state[1]) % 2) == 0)  # checkerboard pattern
 
         if state in obstacleSet:
             stateSpace[state] = obstacleValue
@@ -645,8 +670,8 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
         elif (feature2):
             obstacleSet.add(state)
             stateSpace[state] = obstacleValue
-        elif (feature3):
-            stateSpace[state] = 0.5*obstacleValue
+        #elif (feature3):
+        #    stateSpace[state] = 0.5*obstacleValue
         else:
             stateSpace[state] = passiveValue
 

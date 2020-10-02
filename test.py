@@ -15,34 +15,35 @@ import math as m  # Log scale cost fxn
 
 # Boundary Conditions
 # side length of square state space
-environmentSize = 12
+environmentSize = 25
 
 # Eval Controls
+computeAverageCost = True  # Generate cost and convergence diagrams. Expensive.
 avgCostTrials = 3  # Number of times to simulate walks from each init state
 avgCostSamplePeriod = 1  # Use every Nth state as a starting point
 plottingOn = True  # Skip making animations for faster results
 
 # Labels
-runTitle = 'mfpt seed False complex 12x12'
+runTitle = 'Raster Ordered Update With Seeding'
 convergencePlotTitle = runTitle+'\n' + \
     'Policy Convergence vs. Time'
 costPlotTitle = runTitle+'\n'+'Average Utility of Markov Chain Versus Time'
 
 # Seed Settings
 # pre-seed value function based on dijkstra distance?
-dijkstraSeed = False
+dijkstraSeed = True
 mfptSeed = False
 gradientSeed = False
 
 # Global Update Settings
 # run a global sweep every X steps.
-globalUpdatePeriod = 1111
+globalUpdatePeriod = 1
 
 # MFPT Settings
 # Run an MFPT ranked update every N steps
-mfptUpdatePeriod = 1
+mfptUpdatePeriod = 11111
 # run mfpt analysis every X updates. 3-5 is empriacle optimum
-mfptRefreshPeriod = 4 * mfptUpdatePeriod
+mfptRefreshPeriod = 12 * mfptUpdatePeriod
 # top X percent of mfpt scores to put in update list.
 mfptUpdateRatio = 1.0
 
@@ -70,12 +71,10 @@ directional4 = [(1, 0), (-1, 0), (0, 1), (0, -1), (0, 0)]
 
 actionPrimatives = directional8
 
-transitionModel = samdp.transitionModelGenerator(
-    stateSpace, actionPrimatives, 0.2)
 
 # Create key data objects
-demo = samdp.SAMDP(stateSpace, actionPrimatives, transitionModel)
-demo.renderFrame()
+demo = samdp.SAMDP(stateSpace, actionPrimatives)
+demo.renderFrame(title=runTitle)
 timeFrames = []
 deltaPolicyFrames = []
 avgCostFrames = []
@@ -138,19 +137,15 @@ while unconverged:
 
    # Global update
     if iteration % globalUpdatePeriod == 0:
-        demo.updateList = demo.problemSet
-        demo.hybridIterationStep()
+        demo.updateList = demo.problemSet.copy()
+        demo.policyIterationStep()
         # Convergence can only be accurately tested for after a global update.
     # MFPT Update
     elif iteration % mfptUpdatePeriod == 0:
         if (iteration % mfptRefreshPeriod)*len(mfptUpdateList) == 0:
-            #print('MFPT RE-RANK: INIT')
-            mfptUpdateList = demo.mfptRank(mfptUpdateRatio)
-        demo.updateList = mfptUpdateList
+            demo.mfptRank(mfptUpdateRatio)
+        #demo.updateList = mfptUpdateList.copy()
         demo.mfptPolicyIteration()
-    # Gradient Update
-    elif iteration % gradientRefreshPeriod:
-        demo.updateList = demo.gradientRank(gradientUpdateRatio)
 
     # Give our ranked problem set, update
     unconverged = (demo.maxDifference >
@@ -165,22 +160,23 @@ while unconverged:
     print('test.py: deltaTime: ', deltaTime)
     totalTime += deltaTime
 
-    # Score performance
-    (deltaPolicy, cost) = demo.averageCost(
-        previousPolicy, avgCostTrials, avgCostSamplePeriod)
-    timeFrames.append(totalTime)
-    deltaPolicyFrames.append(deltaPolicy)
-    avgCostFrames.append(cost)
+    if computeAverageCost:
+        # Score performance
+        (deltaPolicy, cost) = demo.averageCost(
+            previousPolicy, avgCostTrials, avgCostSamplePeriod)
+        timeFrames.append(totalTime)
+        deltaPolicyFrames.append(deltaPolicy)
+        avgCostFrames.append(cost)
 
     # Save conditions
     if plottingOn:
         print('RENDER FRAME CHECK: INIT')
         if iteration < 20:
-            demo.renderFrame()
+            demo.renderFrame(title=runTitle)
         elif iteration > 20 and iteration % 1 == 0:
-            demo.renderFrame()
+            demo.renderFrame(title=runTitle)
         elif iteration < 30 and iteration % 1 == 0:
-            demo.renderFrame()
+            demo.renderFrame(title=runTitle)
         print('RENDER FRAME CHECK: COMPLETE')
 
     if demo.frameBuffer % 60 == 0:
