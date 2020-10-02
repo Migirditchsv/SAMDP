@@ -98,10 +98,12 @@ def autoTest(environmentSize=12, avgCostTrials=3, avgCostSamplePeriod=1, dijkstr
             demo.policyIterationStep()
         else:  # Do mfpt ranked update
             demo.mfptPolicyIteration()
+            # if demo.solverIterations % demo.mfptRefreshPeriod==0:
+            #     demo.renderMFPT(title=runTitle, path=runPath)
 
         # Check For Convergence
         unconverged = (demo.maxDifference >
-                       demo.convergenceThresholdEstimate) and\
+                      (demo.convergenceThresholdEstimate*demo.convergenceThresholdEstimate)) and\
             (demo.policy != previousPolicy) and\
             (iteration < 101) or\
             (iteration < 5)

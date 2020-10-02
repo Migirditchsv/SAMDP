@@ -98,7 +98,7 @@ class SAMDP:
                        for state in self._stateIterator}
         self.maxDifference = 9999999999999
         # estimate of convergence condition
-        self.convergenceThresholdEstimate = 0.1 * self.normalValue  # (
+        self.convergenceThresholdEstimate = 0.01 * self.normalValue  # (
         # 0.5 * abs(self.goalValue - self.obstacleValue) / self.worldSize)**2
 
         # Internal data objects
@@ -425,7 +425,7 @@ class SAMDP:
         figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
         plt.close()
 
-    def renderMFPT(self):
+    def renderMFPT(self,title='',path='Default'):
         mfptGrid = np.zeros((self.rowSize, self.colSize))
         for state in self._stateIterator:
             stateIndex = self.stateToIndex(state)
@@ -438,8 +438,8 @@ class SAMDP:
         # ax.invert_yaxis()
         plt.suptitle(titleString, fontsize=35)
         frameLabel = str(self.solverIterations).zfill(self.frameMagnitude)
-        fileName = 'MFPT'+frameLabel+'.png'
-        filePath = self.folderPath+'/'+fileName
+        fileName = path+frameLabel+'.png'
+        filePath = self.folderPath+'/'+path+'/'+fileName
         print('saving: ', filePath)
         figure.savefig(filePath, bbox_inches='tight', pad_inches=0)
         plt.close()
