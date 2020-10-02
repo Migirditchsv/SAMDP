@@ -37,11 +37,6 @@ def autoTest(environmentSize=12, avgCostTrials=3, avgCostSamplePeriod=1, dijkstr
         'Policy Convergence vs. Time'
     costPlotTitle = runTitle+'\n'+'Average Utility of Markov Chain Versus Time'
 
-    # run mfpt analysis every X updates. 3-5 is empriacle optimum
-    mfptRefreshPeriod = 12
-    # top X percent of mfpt scores to put in update list.
-    mfptUpdateRatio = 1.0
-
     # Initialize Environment
     stateSpace = samdp.stateSpaceGenerator(environmentSize)
 
@@ -100,13 +95,8 @@ def autoTest(environmentSize=12, avgCostTrials=3, avgCostSamplePeriod=1, dijkstr
 
         # Global update
         if not mfptRank:
-            demo.updateList = demo.problemSet.copy()
             demo.policyIterationStep()
-        # MFPT Update
         else:  # Do mfpt ranked update
-            if (iteration % mfptRefreshPeriod)*len(mfptUpdateList) == 0:
-                demo.mfptRank(mfptUpdateRatio)
-
             demo.mfptPolicyIteration()
 
         # Check For Convergence

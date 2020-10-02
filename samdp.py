@@ -38,6 +38,7 @@ class SAMDP:
     # Universal Control Parameters
     gamma = 0.9  # exponential discount factor
     maxSteps = 300  # Max allowable solver steps
+    mfptRefreshPeriod = 5
 
     # warmup
     # num of zeros to pad frame counter
@@ -75,6 +76,7 @@ class SAMDP:
         self.goalValue = np.nanmax(self.valueFunction)
         # value of inaccessible points
         self.obstacleValue = float(np.nanmin(self.valueFunction))
+        self.normalValue = float(np.nanmin(abs(self.valueFunction)))
 
         # public vars
         # Stores mfpt scores by state index
@@ -96,8 +98,8 @@ class SAMDP:
                        for state in self._stateIterator}
         self.maxDifference = 9999999999999
         # estimate of convergence condition
-        self.convergenceThresholdEstimate = (
-            2.0 * abs(self.goalValue - self.obstacleValue) / self.worldSize)**2
+        self.convergenceThresholdEstimate = 0.1 * self.normalValue  # (
+        # 0.5 * abs(self.goalValue - self.obstacleValue) / self.worldSize)**2
 
         # Internal data objects
         self._frames = []  # list of plots to save
@@ -175,16 +177,42 @@ class SAMDP:
         if currentState not in self.obstacleSet:
             self.valueFunction[currentState] = value
 
+    def _mfptLookAhead(self, currentState):
+        newStates = self._admissableMoves(currentState)
+        rewards = [self.mfpt[index] for index in newStates]
+        stateIndex = range(len(newStates))
+
+        qFunction = []
+
+        # Loop over actions
+        for action in self.actionPrimatives:
+            # prob of landing in each new state after action
+            prob = self._transitionProbability(action, currentState, newStates)
+            # risk*reward coefficients for each possible outcome of the action
+            actionOutcomes = [(prob[i] * rewards[i]) for i in stateIndex]
+            qFunction.append(sum(actionOutcomes))
+
+        # Assign action MINIMIZING mfpt score of next step
+        # find min and argmin of q.
+        def f(i): return qFunction[i]
+        argMin = min(range(len(qFunction)), key=f)
+        actMin = self.actionPrimatives[argMin]
+        # Update Policy
+        self.policy[currentState] = actMin
+
     # Iteration functions
 
     def policyIterationStep(self):
         # Value convergence step
-        for state in self.updateList:
-            # Lookahead
-            self._fixedPolicyLookAhead(state)
+        count = 0
+        while count < self.worldSize:
+            for state in self.problemSet:
+                # Lookahead
+                self._fixedPolicyLookAhead(state)
+                count += 1
 
         # policy update step
-        for state in self.updateList:
+        for state in self.problemSet:
             qFunction = self._lookAhead(state)
             # find max and argmax of q.
             def f(i): return qFunction[i]
@@ -203,12 +231,20 @@ class SAMDP:
         self.solverIterations += 1
 
     def mfptPolicyIteration(self):
+
+        # Define update order if undef
+        if len(self.mfptRanked) == 0:
+            self.mfptRanked = self.problemSet.copy()
         # First propagate value on all states ordered by current mfpt ranking
-        for state in self.updateList:
-            qFunction = self._fixedPolicyLookAhead(state)
+        count = 0
+        while count < self.worldSize:
+            for state in self.mfptRanked:
+                # Lookahead
+                self._fixedPolicyLookAhead(state)
+                count += 1
 
         # Then do a second sweep updating policies as neighboring values have shifted
-        for state in self.updateList:
+        for state in self.mfptRanked:
             qFunction = self._lookAhead(state)
             # find max and argmax of q.
             def f(i): return qFunction[i]
@@ -216,6 +252,12 @@ class SAMDP:
             actMax = self.actionPrimatives[argMax]
             # Update Policy
             self.policy[state] = actMax
+
+        # Update mfpt ranking if empty or if refresh period
+        if self.solverIterations % self.mfptRefreshPeriod == 0:
+            self.mfptRank(selectionRatio=1.0)
+
+        # Update policy to maximize MFPT value
 
         # close out
         diff = abs(self.holdValueFunction - self.valueFunction)
@@ -620,7 +662,7 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
     quarter = m.floor(center / 2.0)
 
     # Init
-    goalSet = {(1, worldSize-1)}
+    goalSet = {(1, worldSize-2)}
     obstacleSet = set()
 
     # flat list of states, useful for comprehensions
@@ -658,8 +700,8 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
                     state[1] != center + quarter and
                     state[0] == center)
         # bottom right checkerboard
-        #feature3 = (state[0] > center) and (state[1] > center) and \
-        #    (((state[0]+state[1]) % 2) == 0)  # checkerboard pattern
+        feature3 = (state[0] > center) and (state[1] > center) and \
+            (((state[0]+state[1]) % 2) == 0)  # checkerboard pattern
 
         if state in obstacleSet:
             stateSpace[state] = obstacleValue
@@ -670,8 +712,8 @@ def stateSpaceGenerator(worldSize, obstacleFraction=0.0):
         elif (feature2):
             obstacleSet.add(state)
             stateSpace[state] = obstacleValue
-        #elif (feature3):
-        #    stateSpace[state] = 0.5*obstacleValue
+        elif (feature3):
+            stateSpace[state] = 0.5*obstacleValue
         else:
             stateSpace[state] = passiveValue
 
